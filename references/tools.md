@@ -30,10 +30,18 @@ def generate_suggestions(tool_input) -> list[PermissionRule]
 ### 内置工具
 
 ```python
-from agentscope.tool import Bash, Read, Write, Edit, Glob, Grep, SkillViewer
+from agentscope.tool import Bash, Read, Write, Edit, Glob, Grep, ResetTools
 
 # 这些工具都有完善的权限检查和文件缓存
 toolkit = Toolkit(tools=[Bash(), Read(), Write(), Edit()])
+```
+
+### 任务管理工具
+
+```python
+from agentscope.tool import TaskCreate, TaskGet, TaskList, TaskUpdate
+
+toolkit = Toolkit(tools=[Bash(), TaskCreate(), TaskList()])
 ```
 
 ## ToolChunk 和 ToolResponse
@@ -92,9 +100,11 @@ async for chunk_or_response in toolkit.call_tool(tool_call_block, agent_state):
 
 # 查询工具
 tool = await toolkit.get_tool("bash")
+tool = await toolkit.check_tool_available("bash", activated_groups=["basic"])
 
 # Skill 相关
 instructions = await toolkit.get_skill_instructions()  # 获取 skill 提示
+instructions = await toolkit.get_skill_instructions(groups=["basic"])
 ```
 
 ## ToolGroup
@@ -152,6 +162,7 @@ await stdio_client.connect()
 ```python
 await client.connect()              # 连接（仅 stateful）
 await client.close()                # 关闭（仅 stateful）
+client.is_connected                 # 是否已连接
 tools = await client.list_tools()   # 获取 ToolBase 列表
 tool = await client.get_tool(name)  # 获取单个 MCPTool
 raw = await client.list_raw_tools() # 获取原始 mcp.types.Tool

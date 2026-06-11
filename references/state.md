@@ -5,9 +5,7 @@
 v2 取消了独立的 memory/session 模块，改用 `AgentState` 统一管理：
 
 ```python
-from agentscope.state import AgentState
-
-state = AgentState()
+from agentscope.state import AgentState, Task, TaskContext
 ```
 
 ### 字段说明
@@ -87,15 +85,17 @@ class TaskContext(BaseModel):
     tasks: list[Task]          # 任务列表
 ```
 
+任务通过内置工具 `TaskCreate`/`TaskGet`/`TaskList`/`TaskUpdate` 管理，Agent 可自动跟踪任务进度。
+
 ## 在 Agent 中使用
 
 ```python
 # 创建新 Agent 时传入空状态
-agent = Agent(name="...", state=AgentState())
+agent = Agent(name="...", system_prompt="...", model=model, state=AgentState())
 
 # 或恢复已有状态
 saved_state = AgentState.model_validate_json(saved_json)
-agent = Agent(name="...", state=saved_state)
+agent = Agent(name="...", system_prompt="...", model=model, state=saved_state)
 
 # 获取当前状态
 current_state = agent.state
@@ -120,4 +120,14 @@ config = ContextConfig(
     summary_template="...",    # 摘要模板
     summary_schema={...},      # 摘要 JSON Schema
 )
+```
+
+### 卸载（Offload）
+
+当 Agent 配置了 `offloader`（如 Workspace），压缩后的上下文和超长工具结果会被卸载到持久存储：
+
+```python
+# 自动附加到 summary 后面的提示
+"<system-reminder>The compressed context is offloaded to '{path}', "
+"you can refer to it when needed.</system-reminder>"
 ```

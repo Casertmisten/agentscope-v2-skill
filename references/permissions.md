@@ -8,28 +8,66 @@ v2 引入了完整的权限系统，每个工具调用都会经过权限检查�
 
 ```python
 from agentscope.permission import (
-    PermissionContext,     # 权限上下文（存在 AgentState 中）
-    PermissionDecision,   # 权限决策
-    PermissionRule,       # 权限规则
-    PermissionBehavior,   # 行为枚举
+    PermissionContext,              # 权限上下文（存在 AgentState 中）
+    PermissionDecision,             # 权限决策
+    PermissionRule,                 # 权限规则
+    PermissionBehavior,             # 行为枚举
+    PermissionMode,                 # 权限模式
+    PermissionEngine,               # 权限引擎
+    AdditionalWorkingDirectory,     # 额外工作目录
 )
 ```
 
-### PermissionDecision
+## PermissionMode — 权限模式
+
+控制权限系统如何处理工具执行请求：
+
+| 模式 | 行为 | 适用场景 |
+|---|---|---|
+| `DEFAULT` | 每个操作都需确认，除非有 allow 规则匹配 | 默认模式，最安全 |
+| `ACCEPT_EDITS` | 自动允许工作目录内的文件读写和文件系统命令 | 快速迭代开发 |
+| `EXPLORE` | 只读模式：允许只读工具和命令，拒绝修改操作 | 探索代码库 |
+| `BYPASS` | 跳过所有安全检查，仅用户 deny/ask 规则生效 | 沙箱环境 |
+| `DONT_ASK` | 将所有 ASK（包括安全 ASK）转为 DENY | 无人值守执行 |
+
+```python
+from agentscope.permission import PermissionMode, PermissionContext
+
+context = PermissionContext(
+    mode=PermissionMode.ACCEPT_EDITS,
+    working_directories={"/project": AdditionalWorkingDirectory(
+        path="/project",
+        source="session",
+    )},
+)
+```
+
+## PermissionBehavior — 行为枚举
+
+```python
+class PermissionBehavior(Enum):
+    ALLOW = "allow"            # 允许执行
+    DENY = "deny"              # 拒绝执行
+    ASK = "ask"                # 需要用户确认
+    PASSTHROUGH = "passthrough" # 工具委托决策给引擎
+```
+
+## PermissionDecision
 
 工具调用前的权限检查结果：
 
 - **ALLOW** — 允许执行
 - **DENY** — 拒绝执行
 - **ASK** — 需要用户确认（触发 `RequireUserConfirmEvent`）
+- **PASSTHROUGH** — 工具委托，由引擎继续规则匹配
 
-### PermissionRule
+## PermissionRule
 
 ```python
 PermissionRule(
     tool_name="bash",         # 工具名
     rule_content="git *",     # 匹配模式（None 表示匹配所有调用）
-    behavior=PermissionBehavior.ALLOW,  # allow/deny
+    behavior=PermissionBehavior.ALLOW,  # allow/deny/ask
     source="suggested",       # 来源：suggested/user/system
 )
 ```
@@ -43,6 +81,7 @@ PermissionRule(
     → ASK  → 触发 RequireUserConfirmEvent
               → 用户确认 → UserConfirmResultEvent → 执行
               → 用户拒绝 → ToolResultBlock(state="denied")
+    → PASSTHROUGH → 由 PermissionEngine 继续规则匹配
 ```
 
 ## ToolBase 权限方法
@@ -68,9 +107,9 @@ class MyTool(ToolBase):
 
 内置工具（Bash、Read、Write、Edit、Glob、Grep）都有完善的权限检查：
 
-- **Bash** — 命令模式匹配
-- **Read/Write/Edit** — 文件路径模式匹配，敏感文件保护
-- **Glob/Grep** — 搜索路径匹配
+- **Bash** — 命令模式匹配，自动允许只读命令（ls/git status）
+- **Read/Write/Edit** — 文件路径模式匹配，敏感文件保护，ACCEPT_EDITS 模式下自动允许工作目录操作
+- **Glob/Grep** — 搜索路径匹配，EXPLORE 模式下自动允许
 
 ### 敏感文件保护
 
@@ -78,15 +117,11 @@ class MyTool(ToolBase):
 # ToolBase 内置危险路径检查
 dangerous_files = [".bashrc", ".gitconfig", ...]
 dangerous_directories = [".git", ".ssh", ...]
-
-def _is_dangerous_path(self, file_path: str) -> bool:
-    # 检查是否是敏感文件/目录
-    ...
 ```
 
 ## ToolGroup 管理
 
-工具组允许将相关工具打包，智能体通过元工具（Meta Tool）按需激活：
+工具组允许将相关工具打包，智能体通过元工具（ResetTools）按需激活：
 
 ### 创建工具组
 
@@ -117,9 +152,10 @@ toolkit = Toolkit(
 智能体通过内置的 `ResetTools` 元工具自动管理：
 
 ```python
-# Agent 内部自动调用元工具
-# 开发者无需手动操作
-# ResetTools 接受各工具组的 bool 参数
+from agentscope.tool import ResetTools
+
+# Agent 内部自动调用 ResetTools
+# 开发者通常无需手动操作
 ```
 
 ### 查询 Schema
@@ -139,13 +175,13 @@ v2 新增了 Skill 系统，允许为智能体加载技能（一组指令+脚本
 ```python
 from agentscope.tool import Toolkit
 
-# 通过目录加载
+# 通过目录加载（在 Workspace 中使用）
 toolkit = Toolkit(
     skills_or_loaders=["/path/to/skills/dir"],
 )
 
-# 获取 skill 提示（可拼接到 sys_prompt）
+# 获取 skill 提示（可拼接到 system_prompt）
 instructions = await toolkit.get_skill_instructions()
 ```
 
-Skill 不是工具——智能体需要先通过 `SkillViewer` 工具阅读 skill 的完整说明，再按照说明使用工具。
+Skill 不是工具——智能体需要先阅读 skill 的完整说明，再按照说明使用工具。

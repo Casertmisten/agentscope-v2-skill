@@ -3,7 +3,7 @@
 ## Msg 类 (Pydantic BaseModel)
 
 ```python
-from agentscope.message import Msg
+from agentscope.message import Msg, Usage
 
 msg = Msg(
     name="user",               # 发送者名称
@@ -43,7 +43,7 @@ from agentscope.message import (
     TextBlock,        # 文本
     ThinkingBlock,    # 推理过程
     HintBlock,        # 给 LLM 的提示/指令
-    DataBlock,        # 二进制数据（图片/音频/视频等，替代 v1 的 Image/Audio/Video Block）
+    DataBlock,        # 二进制数据（图片/音频/视频等）
     ToolCallBlock,    # 工具调用
     ToolResultBlock,  # 工具结果
 )
@@ -114,6 +114,7 @@ ToolResultBlock(
 ```python
 msg.get_text_content()                # 提取所有 TextBlock 文本（"\n" 分隔）
 msg.has_content_blocks("tool_call")   # 检查是否包含指定类型
+msg.has_content_blocks(["tool_call", "tool_result"])  # 支持列表
 msg.get_content_blocks("text")        # 获取指定类型的 block 列表
 msg.append_event(event)               # 从事件流更新消息（流式场景）
 ```

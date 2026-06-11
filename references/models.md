@@ -46,6 +46,22 @@ credential = CredentialFactory.from_dict({"type": "openai", "api_key": "sk-xxx"}
 
 所有模型的基类，通过 `credential.get_chat_model_class()` 获取具体实现。
 
+### 内置 Model 类
+
+```python
+from agentscope.model import (
+    OpenAIChatModel,
+    OpenAIResponseModel,     # OpenAI Responses API
+    AnthropicChatModel,
+    DashScopeChatModel,
+    DeepSeekChatModel,       # 新增
+    GeminiChatModel,
+    MoonshotChatModel,       # 新增
+    OllamaChatModel,
+    XAIChatModel,            # 新增
+)
+```
+
 ### 构造参数
 
 ```python
@@ -93,14 +109,31 @@ result = await model.generate_structured_output(
 # result.content 是 dict
 ```
 
-## Agent 中使用
-
-Agent 内部自动创建和管理 model，开发者只需传 credential 和 model 名称：
+### 相关类型
 
 ```python
+from agentscope.model import (
+    ChatResponse,       # 模型响应
+    StructuredResponse, # 结构化输出响应
+    ChatUsage,          # token 用量
+    ModelCard,          # 模型卡片
+)
+```
+
+## 在 Agent 中使用
+
+Agent 需要接收一个已构建的 `ChatModelBase` 实例：
+
+```python
+credential = OpenAICredential(api_key="sk-xxx")
+model = credential.get_chat_model_class()(
+    credential=credential,
+    model="gpt-4o",
+)
+
 agent = Agent(
     name="Assistant",
-    credential=OpenAICredential(api_key="sk-xxx"),
-    model="gpt-4o",
+    system_prompt="你是一个有用的助手。",
+    model=model,
 )
 ```
