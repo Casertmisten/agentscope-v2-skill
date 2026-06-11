@@ -1,5 +1,7 @@
 # agentscope-v2-skill
 
+[English](README_EN.md) | **中文**
+
 > Claude Code Skill：AgentScope 2.0 多智能体框架开发指南
 
 ## 简介
