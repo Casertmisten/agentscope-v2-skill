@@ -163,7 +163,6 @@ async for event in agent.reply_stream(user_msg):
             print(f"调用工具: {event.tool_call_name}")
         case "TOOL_RESULT_END":
             print(f"工具结果状态: {event.state}")
-
         # 需要用户确认
         case "REQUIRE_USER_CONFIRM":
             for tc in event.tool_calls:
@@ -196,11 +195,37 @@ async for event in agent.reply_stream(user_msg):
         break
 
 # 用户确认后，再次调用传入确认结果
+from agentscope.event import UserConfirmResultEvent, ConfirmResult
 confirm_event = UserConfirmResultEvent(
     confirm_results=[ConfirmResult(confirmed=True, tool_call=tc)]
 )
 final_msg = await agent.reply(confirm_event)
 ```
+
+> `ConfirmResult` 字段：`confirmed: bool`、`tool_call: ToolCallBlock`、可选 `rules: list[PermissionRule]`
+> （确认时附带的权限规则，会沉淀进会话，避免重复询问）。两者均从 `agentscope.event` 导入。
+
+### Omni 模型音频流（v2.0.2+）
+
+支持音频输出的 omni 模型（如 `gpt-audio-mini`、`qwen3.5-omni-plus`）会通过 `DATA_BLOCK_*` 事件流式返回生成的语音。每个 `DataBlockDeltaEvent.data` 是增量 base64 PCM 块，按 `block_id` 串接得到完整音频：
+
+```python
+audio_buffers: dict[str, bytearray] = {}   # block_id -> bytes
+
+async for event in agent.reply_stream(user_msg):
+    match event.type:
+        case "DATA_BLOCK_START":
+            audio_buffers[event.block_id] = bytearray()
+        case "DATA_BLOCK_DELTA":
+            # event.data 是 base64 PCM 增量；event.media_type 形如 "audio/pcm"
+            audio_buffers[event.block_id].extend(base64.b64decode(event.data))
+        case "DATA_BLOCK_END":
+            audio = bytes(audio_buffers.pop(event.block_id))
+```
+
+注意：
+- 模型原生音频由 `DATA_BLOCK_*` 传递，**不会**写入 `state.context`（避免记忆膨胀）。
+- 也可以用 `TTSMiddleware` 把任意文本回复转成同样的 `DATA_BLOCK_*` 音频流（见 middleware 文档），此时数据来自 TTS 模型而非对话模型。
 
 ### 构建最终消息
 

@@ -8,6 +8,8 @@ v2 取消了独立的 memory/session 模块，改用 `AgentState` 统一管理�
 from agentscope.state import AgentState, Task, TaskContext
 ```
 
+> `TaskContext` 自 v2.0.2 起在 `agentscope.state` 模块顶层显式导出（之前仅在内部可用）。
+
 ### 字段说明
 
 ```python
@@ -20,7 +22,11 @@ class AgentState(BaseModel):
     permission_context: PermissionContext  # 权限上下文
     tool_context: ToolContext            # 工具缓存和激活的工具组
     tasks_context: TaskContext           # 任务列表
+    middle_context: dict[str, Any]       # 中间件跨 reply 存取数据的字典
 ```
+
+> `middle_context` 供中间件在多次 reply 之间持久化状态（例如 `ReplyBudgetControlMiddleware`
+> 把每个 reply 的累计 token 记在这里，以 `middleware_key[reply_id]` 为键）。
 
 ### context — 对话上下文
 

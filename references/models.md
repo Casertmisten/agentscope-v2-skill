@@ -32,6 +32,29 @@ models = credential.list_models()
 model_cls = credential.get_chat_model_class()
 ```
 
+### 多模态能力方法（v2.0.2+）
+
+Credential 不仅管理对话模型，还统一暴露 Embedding 和 TTS 能力：
+
+```python
+credential = DashScopeCredential(api_key="ds-xxx")
+
+# 对话模型
+chat_cls = credential.get_chat_model_class()        # -> DashScopeChatModel
+chat_models = credential.list_models()              # 对话模型卡片
+
+# Embedding 模型（v2.0.2+）
+emb_cls = credential.get_embedding_model_class()    # -> DashScopeEmbeddingModel | None
+# 注意：返回单个类或 None，未支持的提供商返回 None
+
+# TTS 模型（v2.0.2+）
+tts_classes = credential.get_tts_model_classes()    # -> list[TTSModelBase 子类]
+tts_cards = credential.list_tts_models()            # -> list[TTSModelCard]
+# 注意：TTS 返回的是「列表」（一个提供商可能有多个模型，如普通/实时两个）
+```
+
+> 各提供商支持的能力不同：DashScope 同时支持对话/Embedding/TTS；OpenAI/Gemini/Ollama 支持 Embedding（`get_embedding_model_class()`）；多数提供商的 TTS 列表为空。
+
 ### CredentialFactory
 
 用于从 dict 反序列化 credential（配合数据库存储）：
@@ -78,6 +101,23 @@ model = credential.get_chat_model_class()(
     context_size=32768,       # 上下文大小（用于压缩）
 )
 ```
+
+### Omni 模型的音频输出（v2.0.2+）
+
+支持音频输出的 omni 风格模型（如 `gpt-audio-mini`、`qwen3.5-omni-plus`）新增 `voice` 参数。设置后框架会自动把请求的 `modalities` 设为 `["text", "audio"]`：
+
+```python
+# 在模型特定的 Parameters 中设置 voice
+from agentscope.model._openai_chat._model import OpenAIChatModel
+
+model = OpenAIChatModel(
+    credential=credential,
+    model="gpt-audio-mini",
+    parameters=OpenAIChatModel.Parameters(voice="alloy"),
+)
+```
+
+产生的音频通过 `reply_stream()` 的 `DATA_BLOCK_*` 事件流式返回；模型生成的原始音频字节**不会**被写入 `state.context`（避免对话记忆膨胀）。可用语音取决于模型卡片（`ModelCard` 的 `voice.suggestions`）——无音频输出的模型会自动隐藏 `voice` 参数。
 
 ### 调用方式
 
@@ -137,3 +177,83 @@ agent = Agent(
     model=model,
 )
 ```
+
+## Embedding 模型（v2.0.2+）
+
+新增独立的 `embedding` 模块，类名统一重命名（旧名 `DashScopeTextEmbedding` 等已移除）：
+
+```python
+from agentscope.embedding import (
+    EmbeddingModelBase,
+    EmbeddingModelCard,
+    EmbeddingResponse,
+    EmbeddingUsage,
+    DashScopeEmbeddingModel,     # 含文本和多模态
+    OpenAIEmbeddingModel,
+    GeminiEmbeddingModel,
+    OllamaEmbeddingModel,
+    EmbeddingCacheBase,
+    FileEmbeddingCache,          # 文件级缓存
+)
+```
+
+通过 Credential 获取实现类（未支持的提供商返回 `None`）：
+
+```python
+from agentscope.credential import OpenAICredential
+
+credential = OpenAICredential(api_key="sk-xxx")
+emb_cls = credential.get_embedding_model_class()   # -> OpenAIEmbeddingModel
+emb_model = emb_cls(credential=credential, model="text-embedding-3-small")
+
+# 调用（模型是 callable，自动分批 + 重试）
+response = await emb_model(inputs=["hello", "world"])
+# response.embeddings -> list[Embedding]，response.usage -> EmbeddingUsage
+```
+
+> `DashScopeEmbeddingModel` 统一支持纯文本模型（`text-embedding-*`，输入 `list[str]`）
+> 和多模态模型（`qwen3-vl-embedding` / `multimodal-embedding-*` / `tongyi-embedding-vision-*`，
+> 输入可为 `DataBlock`）。可通过 `embedding_cache=FileEmbeddingCache()` 启用文件缓存。
+
+## TTS 模型（v2.0.2+）
+
+新增 `tts` 模块，支持普通 TTS 与实时（流式输入）TTS：
+
+```python
+from agentscope.tts import (
+    TTSModelBase,
+    TTSModelCard,
+    TTSResponse,
+    TTSUsage,
+    DashScopeTTSModel,           # 普通非实时
+    DashScopeRealtimeTTSModel,   # 实时流式输入
+)
+```
+
+通过 Credential 获取（TTS 返回**列表**，一个提供商可对应多个类）：
+
+```python
+from agentscope.credential import DashScopeCredential
+
+credential = DashScopeCredential(api_key="ds-xxx")
+tts_classes = credential.get_tts_model_classes()  # [DashScopeTTSModel, DashScopeRealtimeTTSModel]
+cards = credential.list_tts_models()
+
+# 非实时：一次性合成
+tts = DashScopeTTSModel(credential=credential, model="qwen3-tts-flash")
+resp: TTSResponse = await tts.synthesize(text="你好")
+
+# 实时：流式输入，增量输出
+async with DashScopeRealtimeTTSModel(credential=credential) as rt:
+    await rt.push("第一段")
+    chunk = await rt.push("第二段")   # 返回已合成的增量音频
+    final = await rt.synthesize()      # 排空剩余音频
+```
+
+TTS 的核心 API：
+- `synthesize(text)` — 阻塞直到整句合成完成
+- `push(text)` — （仅 realtime）追加文本，返回已就绪的增量音频
+- `connect()` / `close()` — （仅 realtime）连接生命周期，也可用 `async with`
+- `realtime: bool` — 是否支持流式输入模式
+
+> 通常无需手动调用 TTS 模型，配合 `TTSMiddleware` 即可把智能体回复自动转语音（见 middleware 文档）。

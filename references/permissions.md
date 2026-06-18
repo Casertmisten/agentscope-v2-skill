@@ -170,18 +170,58 @@ schemas = await toolkit.get_tool_schemas(groups=["browser"])
 
 ## Skill 系统
 
-v2 新增了 Skill 系统，允许为智能体加载技能（一组指令+脚本+资源）：
+v2 新增了 Skill 系统，允许为智能体加载技能（一组指令+脚本+资源）。
+
+### Skill 目录格式
+
+每个 skill 是一个目录，根目录下必须有 `SKILL.md`，文件头部是 YAML frontmatter（必须含 `name` 和 `description`），之后是 Markdown 正文（智能体阅读的说明）：
+
+```markdown
+---
+name: weather-agent
+description: 查询天气并给出穿衣建议的技能
+---
+
+# 天气技能
+
+当用户问天气时，先调用 get_weather 获取数据，再结合温度给出建议……
+```
+
+### skill 模块
+
+```python
+from agentscope.skill import Skill, SkillLoaderBase, LocalSkillLoader
+
+# Skill 数据类（由 loader 自动构建）
+# Skill(name, description, dir, markdown, updated_at)
+
+# 从本地目录加载（directory 下的 SKILL.md）
+loader = LocalSkillLoader(directory="/path/to/skills", scan_subdir=False)
+skills = await loader.list_skills()   # -> list[Skill]
+
+# 自定义 loader：继承 SkillLoaderBase，实现 async list_skills() -> list[Skill]
+```
+
+### 在 Toolkit 中注册
+
+`skills_or_loaders` 接受三种形式——目录路径字符串、`Skill` 对象、或 `SkillLoaderBase` 实例：
 
 ```python
 from agentscope.tool import Toolkit
+from agentscope.skill import LocalSkillLoader
 
-# 通过目录加载（在 Workspace 中使用）
 toolkit = Toolkit(
-    skills_or_loaders=["/path/to/skills/dir"],
+    # 三种形式可混用
+    skills_or_loaders=[
+        "/path/to/skills/dir",                      # 字符串：当作 LocalSkillLoader(directory=...)
+        LocalSkillLoader(directory="/other/skills"),# 显式 loader（可设 scan_subdir=True）
+    ],
 )
 
 # 获取 skill 提示（可拼接到 system_prompt）
 instructions = await toolkit.get_skill_instructions()
+# 也可限定组：await toolkit.get_skill_instructions(groups=["basic"])
 ```
 
-Skill 不是工具——智能体需要先阅读 skill 的完整说明，再按照说明使用工具。
+> Skill 不是工具——智能体需要先阅读 skill 的完整说明，再按照说明使用工具。Workspace 也可通过
+> `add_skill()`/`remove_skill()` 动态管理 skill（见 middleware-workspace 文档）。

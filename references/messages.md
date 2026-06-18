@@ -77,6 +77,10 @@ DataBlock(source=Base64Source(data="...", media_type="image/png"))
 DataBlock(source=URLSource(url="https://...", media_type="image/jpeg"))
 ```
 
+字段：`id`（自动生成）、`source: Base64Source | URLSource`、可选 `name`。
+- `Base64Source(data: str, media_type: str)` — 内联 base64 字节，`media_type` 形如 `"image/png"`/`"audio/pcm;rate=24000"`。
+- `URLSource(url: str, media_type: str)` — 远程 URL，一次性加载。
+
 ### ToolCallBlock
 ```python
 from agentscope.message import ToolCallBlock, ToolCallState

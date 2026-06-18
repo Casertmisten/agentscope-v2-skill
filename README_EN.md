@@ -14,12 +14,15 @@ This is a [Claude Code](https://claude.ai/code) Skill plugin that provides compr
 
 - **Agent Creation**: Single `Agent` class, `reply()` returns an async event stream
 - **Credential System**: OpenAI / Anthropic / DashScope / Gemini / Ollama authentication
-- **Model Configuration**: ChatModelBase, retries, fallback
+- **Model Configuration**: ChatModelBase, retries, fallback, omni model audio output
+- **Embedding / TTS** (v2.0.2+): dedicated `embedding` / `tts` modules; Credential exposes multimodal capabilities
 - **Toolkit / ToolBase**: Tool registration, built-in tools (Bash, Read, Write, etc.)
 - **MCPClient**: StdIO / stateful HTTP / stateless HTTP connections
 - **AgentState**: Context, summary, session, permission, task management
-- **Event System**: `REPLY_START` → `TEXT_BLOCK_DELTA` → `TOOL_CALL_*` → `REPLY_END`
+- **Event System**: `REPLY_START` → `TEXT_BLOCK_DELTA` → `TOOL_CALL_*` → `REPLY_END`, incl. `DATA_BLOCK_*` audio streams
 - **Permission / ToolGroup / Skill**: Permission control, tool groups, skill system
+- **Middleware**: Intercept reply/reasoning/acting/model_call, incl. built-in `TTSMiddleware`
+- **App**: `create_app` (REST + SSE), `SubAgentTemplate` sub-agent templates
 
 ## Installation
 
@@ -63,15 +66,19 @@ from agentscope.message import UserMsg
 from agentscope.tool import Toolkit
 
 async def main():
+    credential = OpenAICredential(api_key="sk-xxx")
+    model = credential.get_chat_model_class()(
+        credential=credential,
+        model="gpt-4o",
+    )
     agent = Agent(
         name="Assistant",
-        sys_prompt="You are a helpful assistant.",
-        credential=OpenAICredential(api_key="sk-xxx"),
-        model="gpt-4o",
+        system_prompt="You are a helpful assistant.",   # note: system_prompt
+        model=model,                                    # a ChatModelBase instance
         toolkit=Toolkit(),
     )
 
-    async for event in agent.reply(UserMsg("user", "Hello!")):
+    async for event in agent.reply_stream(UserMsg("user", "Hello!")):
         print(event.type, event)
 
 asyncio.run(main())

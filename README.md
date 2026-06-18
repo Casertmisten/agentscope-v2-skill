@@ -14,12 +14,15 @@
 
 - **Agent 创建**：单一 `Agent` 类，`reply()` 返回异步事件流
 - **Credential 体系**：OpenAI / Anthropic / DashScope / Gemini / Ollama 认证
-- **Model 配置**：ChatModelBase、重试、fallback
+- **Model 配置**：ChatModelBase、重试、fallback、Omni 模型音频输出
+- **Embedding / TTS**（v2.0.2+）：独立的 `embedding` / `tts` 模块，Credential 统一暴露多模态能力
 - **Toolkit / ToolBase**：工具注册、内置工具（Bash, Read, Write 等）
 - **MCPClient**：StdIO / 有状态 HTTP / 无状态 HTTP 连接
 - **AgentState**：上下文、摘要、会话、权限、任务管理
-- **事件系统**：`REPLY_START` → `TEXT_BLOCK_DELTA` → `TOOL_CALL_*` → `REPLY_END`
+- **事件系统**：`REPLY_START` → `TEXT_BLOCK_DELTA` → `TOOL_CALL_*` → `REPLY_END`，含 `DATA_BLOCK_*` 音频流
 - **Permission / ToolGroup / Skill**：权限控制、工具组、技能系统
+- **Middleware**：拦截 reply/reasoning/acting/model_call，含内置 `TTSMiddleware`
+- **服务化**：`create_app`（REST + SSE）、`SubAgentTemplate` 子智能体模板
 
 ## 安装
 
@@ -63,15 +66,19 @@ from agentscope.message import UserMsg
 from agentscope.tool import Toolkit
 
 async def main():
+    credential = OpenAICredential(api_key="sk-xxx")
+    model = credential.get_chat_model_class()(
+        credential=credential,
+        model="gpt-4o",
+    )
     agent = Agent(
         name="Assistant",
-        sys_prompt="你是一个有用的助手。",
-        credential=OpenAICredential(api_key="sk-xxx"),
-        model="gpt-4o",
+        system_prompt="你是一个有用的助手。",   # 注意：是 system_prompt
+        model=model,                          # ChatModelBase 实例
         toolkit=Toolkit(),
     )
 
-    async for event in agent.reply(UserMsg("user", "你好！")):
+    async for event in agent.reply_stream(UserMsg("user", "你好！")):
         print(event.type, event)
 
 asyncio.run(main())

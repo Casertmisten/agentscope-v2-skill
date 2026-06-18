@@ -7,7 +7,8 @@ description: |
   与旧版 modelscope/agentscope 的 API 完全不同（无 memory/pipeline/formatter 模块）。
   涵盖：Agent 创建、Credential/Model 配置、Toolkit/ToolBase 工具注册、MCPClient 集成、
   AgentState 状态管理、Event 事件系统、Permission 权限、ToolGroup、Skill 技能系统、
-  Middleware 中间件、Workspace 工作区、App 服务化等。
+  Middleware 中间件（含 TTSMiddleware）、Workspace 工作区、Embedding/TTS 多模态模型、
+  SubAgentTemplate 子智能体模板、App 服务化等。
 ---
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
@@ -15,7 +16,8 @@ description: |
 AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。
 
 **核心特性**：事件驱动架构、权限系统、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
-REST+SSE 智能体服务、Docker/E2B 工作区、Middleware 中间件。
+REST+SSE 智能体服务、Docker/E2B 工作区、Middleware 中间件（含 TTSMiddleware）、Embedding/TTS 多模态模型、
+SubAgentTemplate 子智能体模板、Omni 模型音频流。
 
 **安装**：`pip install agentscope`（Python >= 3.10）
 
@@ -36,13 +38,17 @@ Agent (单一类，reply_stream 返回事件流，reply 返回最终消息)
 
 **一切皆异步** + **事件驱动**：`agent.reply_stream()` 返回 `AsyncGenerator[AgentEvent]`，`agent.reply()` 返回 `Msg`。
 
+**多模态（v2.0.2+）**：独立的 `embedding` / `tts` / `formatter` 模块；Credential 统一暴露
+`get_chat_model_class()` / `get_embedding_model_class()` / `get_tts_model_classes()`；Omni 模型可通过
+`DATA_BLOCK_*` 事件流式输出语音，`TTSMiddleware` 可把任意文本回复转语音。
+
 ## ⚠️ v2 vs v1 关键区别
 
 | 概念 | v1 (modelscope) | v2 (agentscope-ai) |
 |---|---|---|
 | Agent | AgentBase/ReActAgentBase/ReActAgent | 单一 `Agent` 类 |
 | 记忆 | MemoryBase/InMemoryMemory/RedisMemory | `AgentState.context` (list[Msg]) |
-| 格式化器 | FormatterBase/ChatFormatter 等 | 内嵌在 model 实现，无需手动选 |
+| 格式化器 | FormatterBase/ChatFormatter 等 | `formatter` 模块存在，但由各 model 实现内部使用，Agent 无需手动选 |
 | 管道 | MsgHub/SequentialPipeline/FanoutPipeline | 无，直接用 asyncio 编排 |
 | 工具 | 普通函数 + Toolkit | `ToolBase` 子类 + `Toolkit` |
 | MCP | HttpStatefulClient/StatelessClient 等 | 统一 `MCPClient` |
@@ -88,13 +94,15 @@ asyncio.run(main())
 | 需要做什么 | 参考文件 |
 |---|---|
 | 配置模型和认证 | [references/models.md](references/models.md) |
+| Embedding / TTS 多模态模型 (v2.0.2+) | [references/models.md](references/models.md) |
 | 创建消息和内容块 | [references/messages.md](references/messages.md) |
 | 注册工具 (ToolBase) | [references/tools.md](references/tools.md) |
 | 集成 MCP | [references/tools.md](references/tools.md) |
 | 管理状态 (AgentState) | [references/state.md](references/state.md) |
 | Agent 配置和事件 | [references/agent-events.md](references/agent-events.md) |
 | 权限和工具组 | [references/permissions.md](references/permissions.md) |
-| 中间件和工作区 | [references/middleware-workspace.md](references/middleware-workspace.md) |
+| 中间件（含 TTSMiddleware）和工作区 | [references/middleware-workspace.md](references/middleware-workspace.md) |
+| 服务化与子智能体模板 (SubAgentTemplate) | [references/middleware-workspace.md](references/middleware-workspace.md) |
 
 ## Credential 体系
 
@@ -117,6 +125,18 @@ credential = OpenAICredential(api_key="sk-xxx")
 credential = AnthropicCredential(api_key="sk-ant-xxx")
 credential = DashScopeCredential(api_key="ds-xxx")
 ```
+
+Credential 不仅管理对话模型，还统一暴露多模态能力（v2.0.2+）：
+
+```python
+credential.get_chat_model_class()       # 对话模型类
+credential.list_models()                # 对话模型卡片
+credential.get_embedding_model_class()  # Embedding 模型类（未支持返回 None）
+credential.get_tts_model_classes()      # list[TTS 模型类]（未支持返回空列表）
+credential.list_tts_models()            # list[TTSModelCard]
+```
+
+详见 [references/models.md](references/models.md)。
 
 ## Agent 创建
 
@@ -187,8 +207,8 @@ async for event in agent.reply_stream(user_msg):
         case "THINKING_BLOCK_START": ...  # 推理块开始
         case "THINKING_BLOCK_DELTA": ...  # 推理过程
         case "THINKING_BLOCK_END": ...
-        case "DATA_BLOCK_START": ...      # 数据流开始（如音频）
-        case "DATA_BLOCK_DELTA": ...      # 数据增量
+        case "DATA_BLOCK_START": ...      # 数据流开始（如 omni 模型音频、TTS 音频）
+        case "DATA_BLOCK_DELTA": ...      # 数据增量（base64，按 block_id 串接）
         case "DATA_BLOCK_END": ...
         case "TOOL_CALL_START": ...       # 工具调用开始
         case "TOOL_CALL_DELTA": ...       # 工具参数增量
@@ -292,6 +312,7 @@ state.session_id   # 会话 ID
 state.tool_context # ToolContext — 工具缓存和激活的工具组
 state.tasks_context # TaskContext — 任务列表
 state.permission_context # PermissionContext — 权限上下文
+state.middle_context # dict[str, Any] — 中间件跨 reply 存取数据
 ```
 
 ## Workspace（工作区）

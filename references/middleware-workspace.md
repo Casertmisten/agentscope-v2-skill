@@ -7,7 +7,45 @@ v2 新增中间件系统，允许在不修改 Agent 源码的情况下拦截和�
 ### MiddlewareBase
 
 ```python
-from agentscope.middleware import MiddlewareBase, TracingMiddleware
+from agentscope.middleware import (
+    MiddlewareBase,
+    TracingMiddleware,
+    TTSMiddleware,
+    ReplyBudgetControlMiddleware,
+    Mem0Middleware,
+)
+```
+
+### 内置中间件
+
+除自定义中间件外，框架提供以下内置中间件：
+
+| 中间件 | 作用 |
+|---|---|
+| `TracingMiddleware` | 记录每步执行的 tracing 信息（调试/观测用） |
+| `TTSMiddleware` | 把 reasoning 文本转语音，注入 `DATA_BLOCK_*` 事件（见下文） |
+| `ReplyBudgetControlMiddleware` | 按 token 权重限制单次 reply 的消耗（达到预算时给智能体 hint） |
+| `Mem0Middleware` | 基于 [mem0](https://github.com/mem0ai/mem0) 的长期记忆，跨会话记忆用户偏好 |
+
+```python
+from agentscope.middleware import (
+    ReplyBudgetControlMiddleware,
+    Mem0Middleware,
+)
+
+# token 预算控制
+budget = ReplyBudgetControlMiddleware(
+    token_budget=10000,            # 单次 reply 最大 token 消耗
+    input_token_weight=1,          # 输入 token 权重
+    output_token_weight=1,         # 输出 token 权重
+)
+
+# mem0 长期记忆（需 pip install mem0）
+longterm = Mem0Middleware(
+    user_id="alice",
+    # client=mem0.AsyncMemoryClient(...),   # 方式1: 传入已构建的 mem0 client
+    # chat_model=..., embedding_model=...,  # 方式2: 让中间件自动构建 OSS AsyncMemory
+)
 ```
 
 中间件支持 6 个拦截点，每个都是可选的（只需实现需要的）：
@@ -75,6 +113,29 @@ input_kwargs = {
 input_kwargs = {"context_config": ContextConfig | None}
 ```
 
+### TTSMiddleware — 语音合成（v2.0.2+）
+
+内置的 `TTSMiddleware` 把 reasoning 阶段产生的文本块自动转成语音，并以 `DATA_BLOCK_*` 事件注入事件流。它拦截 `on_reply`，因此可以直接用于前端音频播放：
+
+```python
+from agentscope.middleware import TTSMiddleware
+from agentscope.tts import DashScopeRealtimeTTSModel
+
+tts_model = DashScopeRealtimeTTSModel(credential=credential)
+
+agent = Agent(
+    name="Assistant",
+    system_prompt="...",
+    model=model,
+    middlewares=[TTSMiddleware(tts_model=tts_model)],
+)
+```
+
+行为细节：
+- **非实时 TTS**（`tts_model.realtime=False`）：在每个 `TextBlockEndEvent` 时把累计文本送入 `synthesize`，整段合成后输出。
+- **实时 TTS**（`tts_model.realtime=True`）：每个 `TextBlockDeltaEvent` 通过 `push` 推送，增量音频立即作为 `DataBlockDeltaEvent` 输出（每个 delta 携带增量 base64 PCM，按 `block_id` 串接得到完整音频）。
+- 每个 `DataBlockDeltaEvent.data` 是增量 base64 PCM 块；完整音频 = 所有同 `block_id` 的 delta 解码后拼接。
+
 ### 中间件提供工具
 
 ```python
@@ -94,6 +155,8 @@ agent = Agent(
         LoggingMiddleware(),
         PromptMiddleware(),
         TracingMiddleware(),
+        TTSMiddleware(tts_model=tts_model),     # v2.0.2+
+        ReplyBudgetControlMiddleware(token_budget=10000),
     ],
 )
 ```
@@ -222,13 +285,14 @@ v2 提供 FastAPI 工厂函数，用于将 Agent 托管为 REST + SSE 服务。
 from agentscope.app import create_app, SubAgentTemplate
 
 app = create_app(
-    storage=RedisStorage(),               # 存储后端
-    message_bus=RedisMessageBus(),         # 消息总线
-    workspace_manager=LocalWorkspaceManager(),  # 工作区管理器
+    storage=RedisStorage(),               # 存储后端（必填，关键字参数）
+    message_bus=RedisMessageBus(),         # 消息总线（必填，关键字参数）
+    workspace_manager=LocalWorkspaceManager(),  # 工作区管理器（必填，关键字参数）
     extra_credentials=[MyCredential],      # 自定义 Credential 类
     extra_agent_middlewares=my_middleware_factory,  # 中间件工厂
     extra_agent_tools=my_tool_factory,     # 工具工厂
-    sub_agent_templates=[...],            # 子智能体模板
+    custom_subagent_templates=[...],       # 子智能体模板（v2.0.2+）
+    custom_agent_cls=MyAgent,              # 自定义 Agent 子类（v2.0.2+）
 )
 
 # 独立运行
@@ -239,12 +303,60 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 root.mount("/agentscope", app)
 ```
 
+> ⚠️ v2.0.2 起 `create_app` 在第三个必填参数后加了 `*`，即 `extra_*` / `custom_*` / `title` / `version`
+> 均为**仅关键字参数**；`storage` / `message_bus` / `workspace_manager` 仍可位置或关键字传递（推荐关键字）。
+
 ### 内置路由
 
 - `agent_router` — 智能体管理
 - `chat_router` — 对话（REST + SSE）
 - `credential_router` — 凭据管理
 - `model_router` — 模型配置
+- `tts_model_router` — TTS 模型配置（v2.0.2+）
 - `schedule_router` — 定时任务
 - `session_router` — 会话管理
 - `workspace_router` — 工作区操作
+
+## SubAgentTemplate — 子智能体模板（v2.0.2+）
+
+`SubAgentTemplate` 是创建子智能体（团队 worker）的可复用蓝图。在 `create_app` 注册后，内置的 `AgentCreate` 工具会暴露 `subagent_type` 参数，leader 智能体据此路由到对应模板：
+
+```python
+from agentscope.app import SubAgentTemplate
+from agentscope.permission import PermissionContext, PermissionMode
+
+app = create_app(
+    # ...
+    custom_subagent_templates=[
+        SubAgentTemplate(
+            type="explorer",
+            description="只读探索智能体，用于调研代码库、收集信息，不做修改。",
+            system_prompt_template=(
+                "你是团队 {team_name} 的成员 {member_name}。{team_description}"
+            ),  # 占位符: {team_name}/{team_description}/{member_name}/
+               #          {member_description}/{leader_name}
+            permission_context=PermissionContext(mode=PermissionMode.EXPLORE),
+            override_leader_mode=True,   # True: worker 用模板的 mode；False: 继承 leader
+        ),
+    ],
+)
+```
+
+字段说明：
+
+| 字段 | 说明 |
+|---|---|
+| `type` | 模板类型标识（如 `"explorer"`/`"coder"`），作为 `AgentCreate` 的 `subagent_type` 枚举值 |
+| `description` | 给 LLM 看的描述，出现在 `AgentCreate` 工具 schema 中 |
+| `system_prompt_template` | 系统提示格式串，支持占位符 `{team_name}` `{team_description}` `{member_name}` `{member_description}` `{leader_name}` |
+| `context_config` | 子智能体的上下文压缩配置（默认 `ContextConfig()`） |
+| `react_config` | 子智能体的 ReAct 循环配置 |
+| `permission_context` | 创建时的权限上下文（如只读/完全访问） |
+| `override_leader_mode` | `True`→worker 使用模板 mode；`False`（默认）→继承 leader 当前 mode |
+| `extend_leader_permission_rules` | `True`（默认）→leader 的 allow/deny/ask 规则叠加在模板规则之上（模板优先匹配） |
+| `extend_leader_working_directories` | `True`（默认）→leader 工作目录合并进模板目录（模板在键冲突时优先） |
+| `tasks_context` | 预定义任务上下文，用于初始化子智能体的工作流 |
+
+- 不注册任何模板时，使用内置的 `DEFAULT_SUB_AGENT_TEMPLATE`。
+- `type` 不允许重复，否则 `create_app` 抛 `ValueError`。
+- 另有 `custom_agent_cls` 参数可整体替换 `Agent` 类（用于团队编排等定制场景）。
