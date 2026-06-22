@@ -102,7 +102,29 @@ model = credential.get_chat_model_class()(
 )
 ```
 
+### OpenAI Chat 模型专属参数
+
+`OpenAIChatModel` 额外支持透传到 OpenAI 兼容 API 的字段（v2.0.3+）：
+
+```python
+from agentscope.model import OpenAIChatModel
+
+model = OpenAIChatModel(
+    credential=credential,
+    model="custom-model",
+    client_kwargs={"timeout": 60.0},    # 转发给 openai.AsyncClient
+    extra_body={"thinking": {"type": "enabled"}},  # 透传到请求体
+)
+```
+
+- `client_kwargs` — 透传给 `openai.AsyncClient`（如 `timeout`/`default_headers`/`http_client`）。
+- `extra_body` — 请求体级扩展字段，适配 DeepSeek、通义、vLLM 等兼容服务商的私有参数；
+  不传时不会在请求里出现 `extra_body` 键。
+
 ### Omni 模型的音频输出（v2.0.2+）
+
+> ⚠️ 实验性 / 积极开发中：Omni 音频输出属于官方 Voice Agent 路线（roadmap）的多模态阶段，
+> API 和行为可能随版本变动。
 
 支持音频输出的 omni 风格模型（如 `gpt-audio-mini`、`qwen3.5-omni-plus`）新增 `voice` 参数。设置后框架会自动把请求的 `modalities` 设为 `["text", "audio"]`：
 
@@ -180,6 +202,8 @@ agent = Agent(
 
 ## Embedding 模型（v2.0.2+）
 
+> ⚠️ 实验性：`embedding` 模块随多模态路线演进，类名和接口在后续版本仍可能调整。
+
 新增独立的 `embedding` 模块，类名统一重命名（旧名 `DashScopeTextEmbedding` 等已移除）：
 
 ```python
@@ -211,11 +235,19 @@ response = await emb_model(inputs=["hello", "world"])
 # response.embeddings -> list[Embedding]，response.usage -> EmbeddingUsage
 ```
 
-> `DashScopeEmbeddingModel` 统一支持纯文本模型（`text-embedding-*`，输入 `list[str]`）
+> `OpenAIEmbeddingModel` 新增 `pass_dimensions`（v2.0.3+，默认 `True`）控制是否把 `dimensions`
+> 参数发给 API。某些 OpenAI 兼容服务商（如部分 vLLM/Ollama 后端）不支持该字段，设为 `False` 即可：
+> `OpenAIEmbeddingModel(credential=..., model=..., pass_dimensions=False)`。响应解析也已兼容
+> 服务端省略 `index`、或在 `embedding` 为空时回退到 `dense_embedding` 的情况。
+
+> `DashScopeEmbeddingModel` 统一支持纯文本模型（`text-embedding-*`，输入 `list[str]`)
 > 和多模态模型（`qwen3-vl-embedding` / `multimodal-embedding-*` / `tongyi-embedding-vision-*`，
 > 输入可为 `DataBlock`）。可通过 `embedding_cache=FileEmbeddingCache()` 启用文件缓存。
 
 ## TTS 模型（v2.0.2+）
+
+> ⚠️ 实验性 / 积极开发中：`tts` 模块是官方 Voice Agent 路线（roadmap）的 Phase 1，
+> 后续将扩展更多 TTS 提供商并走向多模态/实时阶段，API 可能随版本变动。
 
 新增 `tts` 模块，支持普通 TTS 与实时（流式输入）TTS：
 
@@ -225,8 +257,9 @@ from agentscope.tts import (
     TTSModelCard,
     TTSResponse,
     TTSUsage,
-    DashScopeTTSModel,           # 普通非实时
-    DashScopeRealtimeTTSModel,   # 实时流式输入
+    DashScopeTTSModel,                 # 普通非实时
+    DashScopeRealtimeTTSModel,         # Qwen3 实时流式输入
+    DashScopeCosyVoiceRealtimeTTSModel,  # CosyVoice 实时流式（v2.0.3+）
 )
 ```
 
@@ -236,7 +269,7 @@ from agentscope.tts import (
 from agentscope.credential import DashScopeCredential
 
 credential = DashScopeCredential(api_key="ds-xxx")
-tts_classes = credential.get_tts_model_classes()  # [DashScopeTTSModel, DashScopeRealtimeTTSModel]
+tts_classes = credential.get_tts_model_classes()  # [DashScopeTTSModel, DashScopeRealtimeTTSModel, ...]
 cards = credential.list_tts_models()
 
 # 非实时：一次性合成
@@ -255,5 +288,10 @@ TTS 的核心 API：
 - `push(text)` — （仅 realtime）追加文本，返回已就绪的增量音频
 - `connect()` / `close()` — （仅 realtime）连接生命周期，也可用 `async with`
 - `realtime: bool` — 是否支持流式输入模式
+
+> v2.0.3 新增 `DashScopeCosyVoiceRealtimeTTSModel`（`cosyvoice-v3-plus`/`cosyvoice-v3-flash` 等），
+> 同样是 realtime 模型，用法与 `DashScopeRealtimeTTSModel` 一致。区别在于 CosyVoice 由服务端
+> 按句切分，`push` 在文本不足以成句时可能返回空，需调 `synthesize()` 强制输出剩余文本。
+> 该模型仍处于开发中，行为细节可能调整。
 
 > 通常无需手动调用 TTS 模型，配合 `TTSMiddleware` 即可把智能体回复自动转语音（见 middleware 文档）。

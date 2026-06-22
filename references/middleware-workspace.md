@@ -115,6 +115,8 @@ input_kwargs = {"context_config": ContextConfig | None}
 
 ### TTSMiddleware — 语音合成（v2.0.2+）
 
+> ⚠️ 实验性：依赖的 `tts` 模块属于 Voice Agent 路线（roadmap）的进行中方向，行为可能调整。
+
 内置的 `TTSMiddleware` 把 reasoning 阶段产生的文本块自动转成语音，并以 `DATA_BLOCK_*` 事件注入事件流。它拦截 `on_reply`，因此可以直接用于前端音频播放：
 
 ```python

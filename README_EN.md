@@ -14,15 +14,16 @@ This is a [Claude Code](https://claude.ai/code) Skill plugin that provides compr
 
 - **Agent Creation**: Single `Agent` class, `reply()` returns an async event stream
 - **Credential System**: OpenAI / Anthropic / DashScope / Gemini / Ollama authentication
-- **Model Configuration**: ChatModelBase, retries, fallback, omni model audio output
-- **Embedding / TTS** (v2.0.2+): dedicated `embedding` / `tts` modules; Credential exposes multimodal capabilities
-- **Toolkit / ToolBase**: Tool registration, built-in tools (Bash, Read, Write, etc.)
+- **Model Configuration**: ChatModelBase, retries, fallback, omni model audio output, `extra_body` passthrough (v2.0.3+)
+- **Embedding / TTS** (v2.0.2+, experimental): dedicated `embedding` / `tts` modules; Credential exposes multimodal capabilities; incl. CosyVoice realtime TTS (v2.0.3+)
+- **Toolkit / ToolBase**: Tool registration, built-in tools (Bash, Read, Write, etc.), `ToolMiddlewareBase` tool-level onion middleware (v2.0.3+)
 - **MCPClient**: StdIO / stateful HTTP / stateless HTTP connections
 - **AgentState**: Context, summary, session, permission, task management
 - **Event System**: `REPLY_START` → `TEXT_BLOCK_DELTA` → `TOOL_CALL_*` → `REPLY_END`, incl. `DATA_BLOCK_*` audio streams
 - **Permission / ToolGroup / Skill**: Permission control, tool groups, skill system
-- **Middleware**: Intercept reply/reasoning/acting/model_call, incl. built-in `TTSMiddleware`
+- **Middleware**: Intercept reply/reasoning/acting/model_call, incl. built-in `TTSMiddleware` / `ReplyBudgetControlMiddleware` / `Mem0Middleware`
 - **App**: `create_app` (REST + SSE), `SubAgentTemplate` sub-agent templates
+- **Global Config**: `set_id_factory()` for custom ID generation (v2.0.3+)
 
 ## Installation
 

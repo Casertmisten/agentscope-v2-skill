@@ -21,11 +21,18 @@ class ToolBase(ABC):
 ### ToolBase 核心方法
 
 ```python
+async def call(self, **kwargs) -> ToolChunk | AsyncGenerator[ToolChunk, None]
+async def __call__(self, **kwargs) -> ToolChunk | AsyncGenerator[ToolChunk, None]
 async def check_permissions(tool_input, context) -> PermissionDecision
-async def __call__(**kwargs) -> ToolChunk | AsyncGenerator[ToolChunk, None]
 def match_rule(rule_content, tool_input) -> bool
 def generate_suggestions(tool_input) -> list[PermissionRule]
 ```
+
+> v2.0.3 起，工具逻辑应重写 `call()`（而非 `__call__`）。`__call__` 已变为门面：它负责按
+> 注册顺序套用工具级中间件（见下文 `ToolMiddlewareBase`），最终在最内层调用 `call()`。
+> - 自定义工具：实现 `async def call(self, **kwargs)`。
+> - 外部工具（`is_external_tool=True`）：由 agent 产生 external tool call 事件，不在本地执行，
+>   因此不需要也不应实现 `call()`。
 
 ### 内置工具
 
@@ -84,13 +91,43 @@ class MyTool(ToolBase):
     }
     is_read_only: bool = True        # 影响权限（EXPLORE 模式下自动放行）
 
-    async def __call__(self, **kwargs: Any) -> ToolChunk:
+    async def call(self, **kwargs: Any) -> ToolChunk:
         # 执行工具逻辑，返回 ToolChunk
         ...
 ```
 
-> 子类化时需提供 `name`/`description`/`input_schema` 并实现 `async def __call__`；
+> 子类化时需提供 `name`/`description`/`input_schema` 并实现 `async def call`（v2.0.3+）；
 > 权限相关方法（`check_permissions`/`match_rule`/`generate_suggestions`）可选，见 permissions 文档。
+
+## ToolMiddlewareBase — 工具级洋葱中间件（v2.0.3+）
+
+每个 `ToolBase` 实例可在构造时挂一组 `ToolMiddlewareBase`，以洋葱方式包裹 `call()` 的执行：
+最先注册的是最外层，它的前置逻辑先跑、后置逻辑最后跑。流式/非流式工具被统一成 `AsyncGenerator[ToolChunk]`，
+中间件无需区分。
+
+```python
+from agentscope.tool import ToolMiddlewareBase, ToolChunk
+from typing import Any, AsyncGenerator, Callable
+
+class LoggingToolMiddleware(ToolMiddlewareBase):
+    async def on_tool_call(
+        self,
+        tool,              # ToolBase 实例
+        input_kwargs,      # dict[str, Any]，工具入参
+        next_handler,      # Callable[..., AsyncGenerator[ToolChunk, None]]
+    ) -> AsyncGenerator[ToolChunk, None]:
+        print(f"调用 {tool.name}，入参 {input_kwargs}")
+        async for chunk in next_handler(**input_kwargs):
+            yield chunk
+        print(f"{tool.name} 执行结束")
+
+# 挂载方式：构造工具时传 middlewares
+tool = MyTool(middlewares=[LoggingToolMiddleware()])
+```
+
+典型用途：工具级日志/trace、入参改写、结果脱敏、缓存、限流。与 agent 级的
+`MiddlewareBase`（拦截 `on_acting` 等阶段）互补：工具级中间件直接作用于**单个工具的执行**，
+不经过 agent 的事件循环。
 
 ## ToolChunk 和 ToolResponse
 

@@ -14,15 +14,16 @@
 
 - **Agent 创建**：单一 `Agent` 类，`reply()` 返回异步事件流
 - **Credential 体系**：OpenAI / Anthropic / DashScope / Gemini / Ollama 认证
-- **Model 配置**：ChatModelBase、重试、fallback、Omni 模型音频输出
-- **Embedding / TTS**（v2.0.2+）：独立的 `embedding` / `tts` 模块，Credential 统一暴露多模态能力
-- **Toolkit / ToolBase**：工具注册、内置工具（Bash, Read, Write 等）
+- **Model 配置**：ChatModelBase、重试、fallback、Omni 模型音频输出、`extra_body` 透传（v2.0.3+）
+- **Embedding / TTS**（v2.0.2+，实验性）：独立的 `embedding` / `tts` 模块，Credential 统一暴露多模态能力；含 CosyVoice 实时 TTS（v2.0.3+）
+- **Toolkit / ToolBase**：工具注册、内置工具（Bash, Read, Write 等）、`ToolMiddlewareBase` 工具级洋葱中间件（v2.0.3+）
 - **MCPClient**：StdIO / 有状态 HTTP / 无状态 HTTP 连接
 - **AgentState**：上下文、摘要、会话、权限、任务管理
 - **事件系统**：`REPLY_START` → `TEXT_BLOCK_DELTA` → `TOOL_CALL_*` → `REPLY_END`，含 `DATA_BLOCK_*` 音频流
 - **Permission / ToolGroup / Skill**：权限控制、工具组、技能系统
-- **Middleware**：拦截 reply/reasoning/acting/model_call，含内置 `TTSMiddleware`
+- **Middleware**：拦截 reply/reasoning/acting/model_call，含内置 `TTSMiddleware` / `ReplyBudgetControlMiddleware` / `Mem0Middleware`
 - **服务化**：`create_app`（REST + SSE）、`SubAgentTemplate` 子智能体模板
+- **全局配置**：`set_id_factory()` 自定义 ID 生成策略（v2.0.3+）
 
 ## 安装
 

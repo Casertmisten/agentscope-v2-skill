@@ -5,19 +5,21 @@ description: |
   多智能体开发、基于 AgentScope 构建 agent/智能体应用时使用此 skill。即使用户只是说"写个 agent"、
   "多智能体"、"帮我用 agentscope"也应触发。注意：这是 agentscope-ai/agentscope v2 版本，
   与旧版 modelscope/agentscope 的 API 完全不同（无 memory/pipeline/formatter 模块）。
-  涵盖：Agent 创建、Credential/Model 配置、Toolkit/ToolBase 工具注册、MCPClient 集成、
-  AgentState 状态管理、Event 事件系统、Permission 权限、ToolGroup、Skill 技能系统、
-  Middleware 中间件（含 TTSMiddleware）、Workspace 工作区、Embedding/TTS 多模态模型、
-  SubAgentTemplate 子智能体模板、App 服务化等。
+涵盖：Agent 创建、Credential/Model 配置、Toolkit/ToolBase 工具注册（含 ToolMiddlewareBase 工具级中间件）、
+MCPClient 集成、AgentState 状态管理、Event 事件系统、Permission 权限、ToolGroup、Skill 技能系统、
+Middleware 中间件（含 TTSMiddleware / ReplyBudgetControlMiddleware / Mem0Middleware）、
+Workspace 工作区、Embedding/TTS 多模态模型、SubAgentTemplate 子智能体模板、App 服务化、
+set_id_factory 全局 ID 工厂等。
 ---
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
 
-AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。
+AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应 v2.0.3。
 
 **核心特性**：事件驱动架构、权限系统、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
-REST+SSE 智能体服务、Docker/E2B 工作区、Middleware 中间件（含 TTSMiddleware）、Embedding/TTS 多模态模型、
-SubAgentTemplate 子智能体模板、Omni 模型音频流。
+REST+SSE 智能体服务、Docker/E2B 工作区、Middleware 中间件（含 TTSMiddleware / ReplyBudgetControlMiddleware /
+Mem0Middleware）、工具级洋葱中间件（ToolMiddlewareBase）、Embedding/TTS 多模态模型、SubAgentTemplate
+子智能体模板、Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
 
 **安装**：`pip install agentscope`（Python >= 3.10）
 
@@ -27,6 +29,7 @@ SubAgentTemplate 子智能体模板、Omni 模型音频流。
 Agent (单一类，reply_stream 返回事件流，reply 返回最终消息)
  ├── ChatModelBase     → LLM 调用（通过 credential.get_chat_model_class() 创建）
  ├── Toolkit           → 管理 ToolBase 工具 + MCPClient + Skill
+ │   └── ToolBase 子类 → 每个工具可挂 ToolMiddlewareBase 洋葱中间件
  ├── AgentState        → 状态（context/summary/permission/task）
  ├── Middlewares       → 中间件链（on_reply/on_reasoning/on_acting/on_model_call/on_system_prompt）
  ├── Offloader         → 上下文卸载（可指向 Workspace）
@@ -41,6 +44,8 @@ Agent (单一类，reply_stream 返回事件流，reply 返回最终消息)
 **多模态（v2.0.2+）**：独立的 `embedding` / `tts` / `formatter` 模块；Credential 统一暴露
 `get_chat_model_class()` / `get_embedding_model_class()` / `get_tts_model_classes()`；Omni 模型可通过
 `DATA_BLOCK_*` 事件流式输出语音，`TTSMiddleware` 可把任意文本回复转语音。
+> ⚠️ TTS / Embedding / Omni 音频 / Realtime 属于官方 Voice Agent 路线（roadmap）的进行中方向，
+> API 可能随版本变动，使用前请以源码为准。
 
 ## ⚠️ v2 vs v1 关键区别
 
@@ -337,3 +342,22 @@ async with workspace:
         offloader=workspace,  # 启用上下文卸载
     )
 ```
+
+## 全局配置
+
+### set_id_factory — 自定义 ID 生成策略（v2.0.3+）
+
+所有 AgentScope 实体（Agent / Session / Credential / Msg 等）的 ID 默认用 `uuid.uuid4().hex`。
+顶层 `agentscope.set_id_factory()` 可在启动时替换为任意无参 callable，用于接入 UUIDv7、
+雪花 ID、带前缀的业务 ID 等：
+
+```python
+import agentscope
+
+# 换成 UUIDv7（需自行安装/实现 uuid7）
+agentscope.set_id_factory(lambda: uuid7().hex)
+```
+
+注意：
+- **安全相关 token 不受影响**（如 gateway token、Redis 锁 token），始终用 `uuid.uuid4().hex`。
+- 只需在程序启动时调用一次，全局生效。
