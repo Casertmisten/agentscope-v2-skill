@@ -8,7 +8,8 @@ description: |
 涵盖：Agent 创建、Credential/Model 配置、Toolkit/ToolBase 工具注册（含 ToolMiddlewareBase 工具级中间件）、
 MCPClient 集成、AgentState 状态管理、Event 事件系统、Permission 权限、ToolGroup、Skill 技能系统、
 Middleware 中间件（含 TTSMiddleware / ReplyBudgetControlMiddleware / Mem0Middleware）、
-Workspace 工作区、Embedding/TTS 多模态模型、SubAgentTemplate 子智能体模板、App 服务化、
+Workspace 工作区（含 Backend 抽象、DockerBackend / E2BBackend）、Embedding/TTS 多模态模型、
+SubAgentTemplate 子智能体模板、App 服务化（含 MessageBus 消息总线：RedisMessageBus / InMemoryMessageBus）、
 set_id_factory 全局 ID 工厂等。
 ---
 
@@ -17,7 +18,8 @@ set_id_factory 全局 ID 工厂等。
 AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应 v2.0.3。
 
 **核心特性**：事件驱动架构、权限系统、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
-REST+SSE 智能体服务、Docker/E2B 工作区、Middleware 中间件（含 TTSMiddleware / ReplyBudgetControlMiddleware /
+REST+SSE 智能体服务（MessageBus 消息总线，含 InMemoryMessageBus 单节点轻量选项）、Docker/E2B 工作区
+（Backend 抽象，内置工具可在容器/云沙箱执行）、Middleware 中间件（含 TTSMiddleware / ReplyBudgetControlMiddleware /
 Mem0Middleware）、工具级洋葱中间件（ToolMiddlewareBase）、Embedding/TTS 多模态模型、SubAgentTemplate
 子智能体模板、Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
 

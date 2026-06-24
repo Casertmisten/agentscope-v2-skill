@@ -219,6 +219,17 @@ from agentscope.workspace import E2BWorkspace
 workspace = E2BWorkspace(...)
 ```
 
+### Backend 抽象（v2.0.3+）
+
+builtin 工具（Bash/Read/Write 等）的执行被抽象到 `BackendBase` 体系，docker / e2b / local 三种后端各自实现 `exec_shell` / `read_file` / `write_file` 原语。`DockerBackend` / `E2BBackend` 已对外导出，供自定义工具/工作区的高级开发者直接构造：
+
+```python
+from agentscope.workspace import DockerBackend, E2BBackend
+from agentscope.tool import BackendBase, LocalBackend, ExecResult
+```
+
+> ℹ️ 普通用 `LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace` 的开发者无需手动构造 Backend——workspace 内部会自行创建。
+
 ### 生命周期管理
 
 ```python
@@ -307,6 +318,26 @@ root.mount("/agentscope", app)
 
 > ⚠️ v2.0.2 起 `create_app` 在第三个必填参数后加了 `*`，即 `extra_*` / `custom_*` / `title` / `version`
 > 均为**仅关键字参数**；`storage` / `message_bus` / `workspace_manager` 仍可位置或关键字传递（推荐关键字）。
+
+### 消息总线（MessageBus）
+
+`create_app` 的 `message_bus` 参数决定跨 session/进程的消息传输后端（事件扇出、唤醒空闲消费者、分布式锁等）。提供两种实现：
+
+```python
+from agentscope.app.message_bus import MessageBus, RedisMessageBus, InMemoryMessageBus
+
+# 生产 / 多进程部署：Redis
+bus = RedisMessageBus(...)
+
+# 单节点 / 本地开发：纯内存（无 Redis 依赖，仅单进程内有效）
+bus = InMemoryMessageBus()
+```
+
+- `RedisMessageBus` —— 生产环境、多 worker 部署必选。
+- `InMemoryMessageBus`（v2.0.3+）—— 单进程部署的轻量选项，无需 Redis，适合本地开发与测试。**不支持过期/多进程**。
+- `MessageBus` —— 上述两者的抽象基类，可自行子类化实现自定义后端。
+
+> ℹ️ MessageBus 属于服务化层基础设施，普通 agent 开发者无需直接使用——由 `create_app` 启动的 FastAPI 服务在内部持有并调用。
 
 ### 内置路由
 

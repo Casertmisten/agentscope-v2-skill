@@ -22,7 +22,8 @@
 - **事件系统**：`REPLY_START` → `TEXT_BLOCK_DELTA` → `TOOL_CALL_*` → `REPLY_END`，含 `DATA_BLOCK_*` 音频流
 - **Permission / ToolGroup / Skill**：权限控制、工具组、技能系统
 - **Middleware**：拦截 reply/reasoning/acting/model_call，含内置 `TTSMiddleware` / `ReplyBudgetControlMiddleware` / `Mem0Middleware`
-- **服务化**：`create_app`（REST + SSE）、`SubAgentTemplate` 子智能体模板
+- **Workspace**：`LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace`，Backend 抽象（`DockerBackend` / `E2BBackend`，内置工具可在容器/云沙箱执行，v2.0.3+）
+- **服务化**：`create_app`（REST + SSE）、`SubAgentTemplate` 子智能体模板、`MessageBus` 消息总线（`RedisMessageBus` / `InMemoryMessageBus` 单节点轻量选项，v2.0.3+）
 - **全局配置**：`set_id_factory()` 自定义 ID 生成策略（v2.0.3+）
 
 ## 安装

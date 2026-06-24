@@ -22,7 +22,8 @@ This is a [Claude Code](https://claude.ai/code) Skill plugin that provides compr
 - **Event System**: `REPLY_START` → `TEXT_BLOCK_DELTA` → `TOOL_CALL_*` → `REPLY_END`, incl. `DATA_BLOCK_*` audio streams
 - **Permission / ToolGroup / Skill**: Permission control, tool groups, skill system
 - **Middleware**: Intercept reply/reasoning/acting/model_call, incl. built-in `TTSMiddleware` / `ReplyBudgetControlMiddleware` / `Mem0Middleware`
-- **App**: `create_app` (REST + SSE), `SubAgentTemplate` sub-agent templates
+- **Workspace**: `LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace`, Backend abstraction (`DockerBackend` / `E2BBackend`, built-in tools run in containers/cloud sandboxes, v2.0.3+)
+- **App**: `create_app` (REST + SSE), `SubAgentTemplate` sub-agent templates, `MessageBus` (`RedisMessageBus` / `InMemoryMessageBus` single-node lightweight option, v2.0.3+)
 - **Global Config**: `set_id_factory()` for custom ID generation (v2.0.3+)
 
 ## Installation
