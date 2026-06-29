@@ -51,10 +51,12 @@ agentscope-v2-skill/
 ├── references/               # Detailed reference docs
 │   ├── agent-events.md       # Agent config and event system
 │   ├── messages.md           # Message types and content blocks
-│   ├── models.md             # Model and Credential configuration
+│   ├── models.md             # Model, Credential, Embedding/TTS multimodal
 │   ├── permissions.md        # Permissions and tool groups
 │   ├── state.md              # AgentState management
-│   └── tools.md              # Toolkit, ToolBase, MCPClient
+│   ├── tools.md              # Toolkit, ToolBase, MCPClient
+│   ├── rag.md                # RAG knowledge base (KnowledgeBase / RAGMiddleware)
+│   └── middleware-workspace.md # Middleware, workspace, app service, sub-agent templates
 └── .claude/
     └── settings.local.json   # Project-level Claude Code settings
 ```

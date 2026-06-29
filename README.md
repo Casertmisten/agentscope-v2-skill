@@ -51,10 +51,12 @@ agentscope-v2-skill/
 ├── references/               # 详细参考文档
 │   ├── agent-events.md       # Agent 配置和事件系统
 │   ├── messages.md           # 消息类型与内容块
-│   ├── models.md             # 模型与 Credential 配置
+│   ├── models.md             # 模型、Credential、Embedding/TTS 多模态
 │   ├── permissions.md        # 权限与工具组
 │   ├── state.md              # AgentState 状态管理
-│   └── tools.md              # Toolkit、ToolBase、MCPClient
+│   ├── tools.md              # Toolkit、ToolBase、MCPClient
+│   ├── rag.md                # RAG 知识库（KnowledgeBase / RAGMiddleware）
+│   └── middleware-workspace.md # 中间件、工作区、服务化、子智能体模板
 └── .claude/
     └── settings.local.json   # 项目级 Claude Code 设置
 ```
