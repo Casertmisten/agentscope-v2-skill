@@ -15,15 +15,16 @@
 - **Agent 创建**：单一 `Agent` 类，`reply()` 返回异步事件流
 - **Credential 体系**：OpenAI / Anthropic / DashScope / Gemini / Ollama 认证
 - **Model 配置**：ChatModelBase、重试、fallback、Omni 模型音频输出、`extra_body` 透传（v2.0.3+）
-- **Embedding / TTS**（v2.0.2+，实验性）：独立的 `embedding` / `tts` 模块，Credential 统一暴露多模态能力；含 CosyVoice 实时 TTS（v2.0.3+）
+- **Embedding / TTS**（v2.0.2+，实验性）：独立的 `embedding`（v2.0.3 重构为泛型基类 + 多模态路由） / `tts` 模块，Credential 统一暴露多模态能力；含 CosyVoice 实时 TTS（v2.0.3+）
+- **RAG 知识库**（v2.0.3+）：`agentscope.rag` 模块（`KnowledgeBase` 句柄 + `QdrantStore` 向量库 + Parser/Chunker 索引管线），`RAGMiddleware` 提供 static（自动注入）与 agentic（工具驱动）两种检索模式
 - **Toolkit / ToolBase**：工具注册、内置工具（Bash, Read, Write 等）、`ToolMiddlewareBase` 工具级洋葱中间件（v2.0.3+）
 - **MCPClient**：StdIO / 有状态 HTTP / 无状态 HTTP 连接
 - **AgentState**：上下文、摘要、会话、权限、任务管理
 - **事件系统**：`REPLY_START` → `TEXT_BLOCK_DELTA` → `TOOL_CALL_*` → `REPLY_END`，含 `DATA_BLOCK_*` 音频流
 - **Permission / ToolGroup / Skill**：权限控制、工具组、技能系统
-- **Middleware**：拦截 reply/reasoning/acting/model_call，含内置 `TTSMiddleware` / `ReplyBudgetControlMiddleware` / `Mem0Middleware`
-- **Workspace**：`LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace`，Backend 抽象（`DockerBackend` / `E2BBackend`，内置工具可在容器/云沙箱执行，v2.0.3+）
-- **服务化**：`create_app`（REST + SSE）、`SubAgentTemplate` 子智能体模板、`MessageBus` 消息总线（`RedisMessageBus` / `InMemoryMessageBus` 单节点轻量选项，v2.0.3+）
+- **Middleware**：拦截 reply/reasoning/acting/model_call，含内置 `TTSMiddleware` / `ReplyBudgetControlMiddleware` / `Mem0Middleware`（mem0 跨会话长期记忆，v2.0.3+）
+- **Workspace**：`LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace`，三种均支持内置工具（Bash/Read/Write/Edit/Grep/Glob）在容器/云沙箱执行，Backend 抽象（`LocalBackend` / `DockerBackend` / `E2BBackend`，v2.0.3+）
+- **服务化**：`create_app`（REST + SSE）、`SubAgentTemplate` 子智能体模板（含团队 Leader HITL 事件投影）、`MessageBus` 消息总线（`RedisMessageBus` / `InMemoryMessageBus` 单节点轻量选项，v2.0.3+）
 - **全局配置**：`set_id_factory()` 自定义 ID 生成策略（v2.0.3+）
 
 ## 安装

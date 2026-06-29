@@ -200,49 +200,77 @@ agent = Agent(
 )
 ```
 
-## Embedding 模型（v2.0.2+）
+## Embedding 模型（v2.0.2+，v2.0.3 重构）
 
 > ⚠️ 实验性：`embedding` 模块随多模态路线演进，类名和接口在后续版本仍可能调整。
 
-新增独立的 `embedding` 模块，类名统一重命名（旧名 `DashScopeTextEmbedding` 等已移除）：
+独立的 `embedding` 模块，导出统一的基类与四个 provider 实现：
 
 ```python
 from agentscope.embedding import (
-    EmbeddingModelBase,
+    EmbeddingModelBase,            # 基类，泛型 Generic[InputT]
     EmbeddingModelCard,
     EmbeddingResponse,
     EmbeddingUsage,
-    DashScopeEmbeddingModel,     # 含文本和多模态
-    OpenAIEmbeddingModel,
-    GeminiEmbeddingModel,
-    OllamaEmbeddingModel,
+    DashScopeEmbeddingModel,       # 文本 + 多模态（一个类按模型名路由）
+    OpenAIEmbeddingModel,          # 文本
+    GeminiEmbeddingModel,          # 文本 + 多模态（图像/视频/音频/PDF）
+    OllamaEmbeddingModel,          # 文本
     EmbeddingCacheBase,
-    FileEmbeddingCache,          # 文件级缓存
+    FileEmbeddingCache,            # 文件级缓存
 )
 ```
 
-通过 Credential 获取实现类（未支持的提供商返回 `None`）：
+### 基类设计（v2.0.3 重构）
+
+`EmbeddingModelBase[InputT]` 是泛型基类（对齐 `ChatModelBase` 的设计）：
+- 文本模型绑定 `EmbeddingModelBase[str]`
+- 多模态模型绑定 `EmbeddingModelBase[str | DataBlock]`
+
+`__call__` 自动**分批并发**（按 `batch_size` 切片，`asyncio.gather` 并发，每批独立重试），
+子类只需实现单批 `_call_api`。各 provider 内置可重试异常（`_get_retryable_exceptions`）。
+
+### 构造（标准化参数）
+
+所有 provider 的构造签名一致（除 OpenAI 多一个 `pass_dimensions`）：
 
 ```python
 from agentscope.credential import OpenAICredential
 
 credential = OpenAICredential(api_key="sk-xxx")
-emb_cls = credential.get_embedding_model_class()   # -> OpenAIEmbeddingModel
-emb_model = emb_cls(credential=credential, model="text-embedding-3-small")
-
-# 调用（模型是 callable，自动分批 + 重试）
-response = await emb_model(inputs=["hello", "world"])
-# response.embeddings -> list[Embedding]，response.usage -> EmbeddingUsage
+emb_model = OpenAIEmbeddingModel(
+    credential=credential,
+    model="text-embedding-3-small",
+    parameters=None,            # 各 provider 的 Parameters 子类；None 用默认（dimensions=512）
+    pass_dimensions=True,       # 仅 OpenAI：是否把 dimensions 发给 API（默认 True）
+    context_size=8191,          # 单条输入 token 上限（OpenAI 默认 8191，其余 8192）
+    max_retries=3,              # 每批重试次数（默认 3）
+    retry_delay=1.0,            # 重试间隔（默认 1.0s）
+    # batch_size 由各 provider 内部定（如 OpenAI=2048, Gemini=100, Ollama=512）
+)
 ```
 
-> `OpenAIEmbeddingModel` 新增 `pass_dimensions`（v2.0.3+，默认 `True`）控制是否把 `dimensions`
-> 参数发给 API。某些 OpenAI 兼容服务商（如部分 vLLM/Ollama 后端）不支持该字段，设为 `False` 即可：
-> `OpenAIEmbeddingModel(credential=..., model=..., pass_dimensions=False)`。响应解析也已兼容
-> 服务端省略 `index`、或在 `embedding` 为空时回退到 `dense_embedding` 的情况。
+调用（模型是 callable，返回 `EmbeddingResponse`）：
 
-> `DashScopeEmbeddingModel` 统一支持纯文本模型（`text-embedding-*`，输入 `list[str]`)
-> 和多模态模型（`qwen3-vl-embedding` / `multimodal-embedding-*` / `tongyi-embedding-vision-*`，
-> 输入可为 `DataBlock`）。可通过 `embedding_cache=FileEmbeddingCache()` 启用文件缓存。
+```python
+response = await emb_model(inputs=["hello", "world"])
+# response.embeddings -> list[Embedding]；response.usage -> EmbeddingUsage
+# 多模态：DashScopeEmbeddingModel/GeminiEmbeddingModel 的 inputs 可含 DataBlock
+```
+
+### provider 差异
+
+| Provider | 输入类型 | 多模态 | 备注 |
+|---|---|---|---|
+| `OpenAIEmbeddingModel` | `str` | ❌ | `pass_dimensions=False` 适配不支持该字段的 OpenAI 兼容后端（部分 vLLM/Ollama） |
+| `DashScopeEmbeddingModel` | `str \| DataBlock` | ✅ | 按模型名前缀路由：`text-embedding-*`(文本) / `qwen*-vl-*`/`multimodal-*`/`tongyi-embedding-vision-*`(多模态) |
+| `GeminiEmbeddingModel` | `str \| DataBlock` | ✅ | 图像/视频/音频/PDF，有每请求元素数限制 |
+| `OllamaEmbeddingModel` | `str` | ❌ | 每次调用新建 client 以避免事件循环绑定问题 |
+
+> DashScope 多模态可配 `embedding_cache=FileEmbeddingCache()` 启用文件缓存。
+> 响应解析已兼容服务端省略 `index`、或在 `embedding` 为空时回退到 `dense_embedding` 的情况。
+
+> 通过 Credential 获取实现类：`credential.get_embedding_model_class()`（未支持的 provider 返回 `None`）。
 
 ## TTS 模型（v2.0.2+）
 
