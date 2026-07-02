@@ -4,9 +4,12 @@
 
 > Claude Code Skill: Development guide for the AgentScope 2.0 multi-agent framework
 
+![version](https://img.shields.io/badge/AgentScope-v2.0.4-blue)
+![license](https://img.shields.io/badge/license-MIT-green)
+
 ## Overview
 
-This is a [Claude Code](https://claude.ai/code) Skill plugin that provides comprehensive development reference for [AgentScope 2.0](https://github.com/agentscope-ai/agentscope) (`agentscope-ai`). Once installed, Claude Code automatically activates this skill when handling AgentScope-related tasks, ensuring accurate v2 API knowledge.
+This is a [Claude Code](https://claude.ai/code) Skill plugin that provides comprehensive development reference for [AgentScope 2.0](https://github.com/agentscope-ai/agentscope) (`agentscope-ai`). Once installed, Claude Code automatically activates this skill when handling AgentScope-related tasks, ensuring accurate v2 API knowledge. Docs are continuously synced with upstream source, currently aligned with **v2.0.4**.
 
 ⚠️ **Note**: AgentScope 2.0 has a completely different, incompatible API from the legacy `modelscope/agentscope` (v1.x).
 
@@ -16,13 +19,13 @@ This is a [Claude Code](https://claude.ai/code) Skill plugin that provides compr
 - **Credential System**: OpenAI / Anthropic / DashScope / Gemini / Ollama authentication
 - **Model Configuration**: ChatModelBase, retries, fallback, omni model audio output, `extra_body` passthrough (v2.0.3+)
 - **Embedding / TTS** (v2.0.2+, experimental): dedicated `embedding` (refactored to generic base + multimodal routing in v2.0.3) / `tts` modules; Credential exposes multimodal capabilities; incl. CosyVoice realtime TTS (v2.0.3+)
-- **RAG Knowledge Base** (v2.0.3+): `agentscope.rag` module (`KnowledgeBase` handle + `QdrantStore` vector store + Parser/Chunker indexing pipeline); `RAGMiddleware` offers both static (auto-inject) and agentic (tool-driven) retrieval modes
+- **RAG Knowledge Base** (v2.0.3+): `agentscope.rag` module (`KnowledgeBase` handle + `QdrantStore` vector store + `MilvusLiteStore` embedded vector store (v2.0.4+) + Parser/Chunker indexing pipeline); `RAGMiddleware` offers both static (auto-inject) and agentic (tool-driven) retrieval modes
 - **Toolkit / ToolBase**: Tool registration, built-in tools (Bash, Read, Write, etc.), `ToolMiddlewareBase` tool-level onion middleware (v2.0.3+)
 - **MCPClient**: StdIO / stateful HTTP / stateless HTTP connections
 - **AgentState**: Context, summary, session, permission, task management
 - **Event System**: `REPLY_START` → `TEXT_BLOCK_DELTA` → `TOOL_CALL_*` → `REPLY_END`, incl. `DATA_BLOCK_*` audio streams
 - **Permission / ToolGroup / Skill**: Permission control, tool groups, skill system
-- **Middleware**: Intercept reply/reasoning/acting/model_call, incl. built-in `TTSMiddleware` / `ReplyBudgetControlMiddleware` / `Mem0Middleware` (mem0 cross-session long-term memory, v2.0.3+)
+- **Middleware**: Intercept reply/reasoning/acting/model_call, incl. built-in `TTSMiddleware` / `ReplyBudgetControlMiddleware` / `Mem0Middleware` (mem0 cross-session long-term memory, v2.0.3+) / `AgenticMemoryMiddleware` (filesystem long-term memory, v2.0.4+)
 - **Workspace**: `LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace`, all three support built-in tools (Bash/Read/Write/Edit/Grep/Glob) running in containers/cloud sandboxes; Backend abstraction (`LocalBackend` / `DockerBackend` / `E2BBackend`, v2.0.3+)
 - **App**: `create_app` (REST + SSE), `SubAgentTemplate` sub-agent templates (incl. team leader HITL event projection), `MessageBus` (`RedisMessageBus` / `InMemoryMessageBus` single-node lightweight option, v2.0.3+)
 - **Global Config**: `set_id_factory()` for custom ID generation (v2.0.3+)

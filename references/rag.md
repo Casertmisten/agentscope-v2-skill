@@ -5,7 +5,9 @@
 RAG 让 Agent 能基于外部知识库回答问题。模块组成:
 
 - **`KnowledgeBase`** —— 运行时句柄,绑定 (embedding 模型 + 向量库 + collection),暴露 search/insert/delete/list 四个操作
-- **`QdrantStore`** —— 内置向量库后端(基于 Qdrant),`VectorStoreBase` 可子类化扩展其它后端
+- **`QdrantStore`** —— 内置向量库后端(基于 Qdrant)
+- **`MilvusLiteStore`**（v2.0.4+）—— 嵌入式向量库后端(基于 Milvus Lite,无需独立服务)
+- **`VectorStoreBase`** —— 向量库抽象基类,可子类化扩展其它后端
 - **Parser / Chunker** —— 文档解析与切分管线(`bytes → Section[] → Chunk[]`)
 - **`RAGMiddleware`** —— 把知识库接入 Agent,两种模式:static(自动注入)/ agentic(工具驱动)
 
@@ -96,7 +98,7 @@ chunks = await chunker.chunk(sections)
 
 ## QdrantStore —— 向量库后端
 
-`QdrantStore` 是目前唯一内置实现(基于 [Qdrant](https://qdrant.tech));自定义后端继承 `VectorStoreBase` 实现抽象方法即可。
+`QdrantStore` 是内置实现之一(基于 [Qdrant](https://qdrant.tech));自定义后端继承 `VectorStoreBase` 实现抽象方法即可。
 
 ```python
 from agentscope.rag import QdrantStore
@@ -109,7 +111,25 @@ store = QdrantStore(path="./qdrant_data")         # 本地磁盘持久化
 #             distance="Cosine")                   # 默认 Cosine,可选 Dot/Euclid/Manhattan
 ```
 
-> ⚠️ **必须用 `async with` 进出**:`__aenter__` 打开 client 连接,`__aexit__` 关闭。collection 在首次操作时惰性创建(`ensure_collection` 幂等且记忆化),无需手动建。
+## MilvusLiteStore —— 嵌入式向量库后端（v2.0.4+）
+
+`MilvusLiteStore` 基于 [Milvus Lite](https://milvus.io/docs/milvus_lite.md),**无需独立服务**,
+数据存在单个本地文件,适合本地开发与轻量部署:
+
+```python
+from agentscope.rag import MilvusLiteStore
+
+store = MilvusLiteStore(uri="./milvus_data.db")   # 本地文件持久化
+# 同样需用 async with 进出
+```
+
+> 两种后端都需用 `async with` 进出:`__aenter__` 打开连接,`__aexit__` 关闭。collection 在首次操作时
+> 惰性创建(`ensure_collection` 幂等且记忆化),无需手动建。
+
+**如何选择**:
+- `QdrantStore(location=":memory:")` —— 纯内存,最快,适合单元测试。
+- `QdrantStore(url=...)` —— 生产部署,需要独立 Qdrant 服务。
+- `MilvusLiteStore(uri="./x.db")` —— 嵌入式,无需服务,适合单机轻量场景。
 
 ## KnowledgeBase —— 运行时句柄
 

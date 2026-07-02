@@ -13,6 +13,7 @@ from agentscope.middleware import (
     TTSMiddleware,
     ReplyBudgetControlMiddleware,
     Mem0Middleware,
+    AgenticMemoryMiddleware,
 )
 ```
 
@@ -26,11 +27,13 @@ from agentscope.middleware import (
 | `TTSMiddleware` | 把 reasoning 文本转语音，注入 `DATA_BLOCK_*` 事件（见下文） |
 | `ReplyBudgetControlMiddleware` | 按 token 权重限制单次 reply 的消耗（达到预算时给智能体 hint） |
 | `Mem0Middleware` | 基于 [mem0](https://github.com/mem0ai/mem0) 的长期记忆，跨会话记忆用户偏好 |
+| `AgenticMemoryMiddleware`（v2.0.4+） | 基于文件系统（Markdown）的长期记忆，由 Agent 自主读写记忆文件 |
 
 ```python
 from agentscope.middleware import (
     ReplyBudgetControlMiddleware,
     Mem0Middleware,
+    AgenticMemoryMiddleware,
 )
 
 # token 预算控制
@@ -47,6 +50,9 @@ longterm = Mem0Middleware(
     embedding_model=my_embedding_model,
     mode="both",                           # static_control / agent_control / both
 )
+
+# 文件系统长期记忆 —— 详见下文「AgenticMemoryMiddleware」小节
+agentic = AgenticMemoryMiddleware(workdir="./workspace")
 ```
 
 中间件支持 6 个拦截点，每个都是可选的（只需实现需要的）：
@@ -208,6 +214,47 @@ agent = Agent(
 
 `static_control`/`both` 模式下，检索到的记忆会以 `AssistantMsg(name="memory")` 形式拼进
 `agent.state.context`；新对话在 reply 后写回 mem0。
+
+### AgenticMemoryMiddleware — 文件系统长期记忆（v2.0.4+）
+
+与 `Mem0Middleware`（依赖外部 mem0）不同，`AgenticMemoryMiddleware` 把长期记忆存为工作目录下的
+**Markdown 文件**（含 `MEMORY.md` 索引），由 Agent 自主读写，**零外部依赖**。它给系统提示注入一段
+记忆管理指令（指导 Agent 何时、如何保存 user/feedback/project/reference 四类记忆），并在每次 reply
+异步检索相关主题文件作为 `HintBlock` 注入。
+
+> 对标 Claude Code 的 Auto Memory 思路：LLM 自行决定何时用 `Write` 工具落盘记忆文件，
+> `Read` 读取已有记忆；中间件负责把 `MEMORY.md` 索引和检索结果送入上下文。
+
+```python
+from agentscope.middleware import AgenticMemoryMiddleware
+
+mem_mw = AgenticMemoryMiddleware(
+    workdir="./demo_workspace",   # 必填：工作目录，记忆文件存在其下的 memory_dir
+    memory_dir="Memory",          # 记忆子目录，默认 "Memory"（含 MEMORY.md 索引）
+    parameters=None,              # AgenticMemoryMiddleware.Parameters，None 用默认
+    backend=None,                 # BackendBase；None 用本地文件系统（LocalBackend）
+)
+
+# 必须配合 Read/Write 工具，Agent 才能读写记忆文件
+agent = Agent(
+    name="Assistant",
+    system_prompt="...",
+    model=model,
+    toolkit=Toolkit(tools=[Read(), Write()]),
+    middlewares=[mem_mw],
+)
+```
+
+**记忆类型**（保存在 Markdown frontmatter 的 `type` 字段）：`user`（用户画像）/ `feedback`
+（用户反馈与偏好）/ `project`（项目动态）/ `reference`（外部系统指引）。中间件指令会明确告诉
+Agent **不该存什么**（代码结构、git 历史、临时任务状态等——这些可从项目本身派生）。
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `workdir` | （必填） | 工作目录根路径 |
+| `memory_dir` | `"Memory"` | 记忆文件子目录（`MEMORY.md` 索引也在其中） |
+| `parameters` | `None` | `Parameters` 配置（检索 top_k、注入上限等），`None` 用默认 |
+| `backend` | `None` | `BackendBase`；`None` 用 `LocalBackend`，也可传 docker/e2b 后端实现远程记忆存储 |
 
 ### 中间件提供工具
 
