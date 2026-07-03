@@ -128,6 +128,16 @@ config = ContextConfig(
 )
 ```
 
+`agent.compress_context()` 还可传入一次性的 `HintBlock`，用于指导本次摘要保留哪些内容：
+
+```python
+from agentscope.message import HintBlock
+
+await agent.compress_context(
+    instructions=HintBlock(hint="压缩时保留用户约束和未完成步骤"),
+)
+```
+
 ### 卸载（Offload）
 
 当 Agent 配置了 `offloader`（如 Workspace），压缩后的上下文和超长工具结果会被卸载到持久存储：

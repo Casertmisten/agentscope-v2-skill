@@ -7,30 +7,34 @@ description: |
   与旧版 modelscope/agentscope 的 API 完全不同（无 memory/pipeline/formatter 模块）。
 涵盖：Agent 创建、Credential/Model 配置、Toolkit/ToolBase 工具注册（含 ToolMiddlewareBase 工具级中间件）、
 MCPClient 集成、AgentState 状态管理、Event 事件系统、Permission 权限、ToolGroup、Skill 技能系统、
-Middleware 中间件（含 TTSMiddleware / ReplyBudgetControlMiddleware / Mem0Middleware 跨会话长期记忆 /
-AgenticMemoryMiddleware 文件系统长期记忆 / RAGMiddleware 检索增强）、Workspace 工作区（三种 Workspace 均支持
+Middleware 中间件（含 TTSMiddleware / ReplyBudgetControlMiddleware / TracingMiddleware / Mem0Middleware 跨会话长期记忆 /
+ReMeMiddleware 内嵌 ReMe 长期记忆 / AgenticMemoryMiddleware 文件系统长期记忆 / RAGMiddleware 检索增强）、Workspace 工作区（三种 Workspace 均支持
 内置工具，Backend 抽象：LocalBackend / DockerBackend / E2BBackend）、Embedding/TTS 多模态模型
 （Embedding v2.0.3 重构为泛型基类 + FileEmbeddingCache 文件缓存）、RAG 知识库（agentscope.rag：
 KnowledgeBase / QdrantStore / MilvusLiteStore / Parser-Chunker 管线 / RAGMiddleware static+agentic 双模式）、
-SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影）、App 服务化（含 MessageBus 消息总线：
+SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影）、App 服务化（含 KnowledgeBaseManager /
+BlobStore / 内嵌或独立索引 worker / MessageBus 消息总线：
 RedisMessageBus / InMemoryMessageBus）、set_id_factory 全局 ID 工厂等。
 ---
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
 
-AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应 v2.0.4。
+AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.4dev`。
 
 **核心特性**：事件驱动架构、权限系统、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
 REST+SSE 智能体服务（MessageBus 消息总线，含 InMemoryMessageBus 单节点轻量选项）、三种 Workspace 均支持
 内置工具在容器/云沙箱执行（LocalBackend / DockerBackend / E2BBackend）、Middleware 中间件（含
-TTSMiddleware / ReplyBudgetControlMiddleware / Mem0Middleware 跨会话长期记忆 / AgenticMemoryMiddleware
+TTSMiddleware / ReplyBudgetControlMiddleware / TracingMiddleware OpenTelemetry 追踪 /
+Mem0Middleware 跨会话长期记忆 / ReMeMiddleware 内嵌 ReMe 长期记忆 / AgenticMemoryMiddleware
 文件系统长期记忆（v2.0.4+）/ RAGMiddleware 检索增强）、工具级洋葱中间件（ToolMiddlewareBase）、
 Embedding/TTS 多模态模型（Embedding v2.0.3 重构为泛型基类 + 多模态路由 + FileEmbeddingCache 文件缓存）、
 RAG 知识库（agentscope.rag：KnowledgeBase + QdrantStore + MilvusLiteStore（v2.0.4+）+ Parser/Chunker 索引管线 +
-RAGMiddleware static/agentic 双模式）、SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影）、
+RAGMiddleware static/agentic 双模式）、SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影 +
+v2.0.4dev AgentInvite 邀请已有 agent 入队）、服务化知识库（KnowledgeBaseManager + LocalBlobStore/S3BlobStore
++ 内嵌或独立索引 worker）、Session Status 统一状态查询端点（v2.0.4dev+）、
 Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
 
-**安装**：`pip install agentscope`（Python >= 3.10）
+**安装**：`pip install agentscope`（Python >= 3.11）
 
 ## 架构概览
 
@@ -116,8 +120,8 @@ asyncio.run(main())
 | Agent 配置和事件 | [references/agent-events.md](references/agent-events.md) |
 | 权限和工具组 | [references/permissions.md](references/permissions.md) |
 | RAG 知识库 (KnowledgeBase / RAGMiddleware) | [references/rag.md](references/rag.md) |
-| 中间件（含 TTSMiddleware / Mem0 / AgenticMemory 长期记忆）和工作区 | [references/middleware-workspace.md](references/middleware-workspace.md) |
-| 服务化与子智能体模板 (SubAgentTemplate) | [references/middleware-workspace.md](references/middleware-workspace.md) |
+| 中间件（含 TTS / Tracing / Mem0 / ReMe / AgenticMemory）和工作区 | [references/middleware-workspace.md](references/middleware-workspace.md) |
+| 服务化、RAG 服务层与子智能体模板 (SubAgentTemplate) | [references/middleware-workspace.md](references/middleware-workspace.md) |
 
 ## Credential 体系
 
@@ -205,6 +209,7 @@ await agent.observe(other_agent_msg)
 
 # 手动触发上下文压缩
 await agent.compress_context()
+await agent.compress_context(instructions=HintBlock(hint="压缩时保留关键决策依据"))
 ```
 
 ## 事件系统

@@ -63,9 +63,13 @@ await agent.observe(other_agent_msg)
 #### compress_context — 手动压缩上下文
 
 ```python
+from agentscope.message import HintBlock
+
 await agent.compress_context()
 # 可选传入自定义 ContextConfig
 await agent.compress_context(context_config=ContextConfig(trigger_ratio=0.5))
+# 可选传入压缩提示，指导摘要保留哪些信息
+await agent.compress_context(instructions=HintBlock(hint="保留 API 迁移决策"))
 ```
 
 ## ReActConfig

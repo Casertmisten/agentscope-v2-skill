@@ -13,7 +13,9 @@ from agentscope.middleware import (
     TTSMiddleware,
     ReplyBudgetControlMiddleware,
     Mem0Middleware,
+    ReMeMiddleware,
     AgenticMemoryMiddleware,
+    RAGMiddleware,
 )
 ```
 
@@ -23,16 +25,20 @@ from agentscope.middleware import (
 
 | 中间件 | 作用 |
 |---|---|
-| `TracingMiddleware` | 记录每步执行的 tracing 信息（调试/观测用） |
+| `TracingMiddleware` | OpenTelemetry 追踪，在 reply/model/tool 三层创建 span（见下文） |
 | `TTSMiddleware` | 把 reasoning 文本转语音，注入 `DATA_BLOCK_*` 事件（见下文） |
 | `ReplyBudgetControlMiddleware` | 按 token 权重限制单次 reply 的消耗（达到预算时给智能体 hint） |
 | `Mem0Middleware` | 基于 [mem0](https://github.com/mem0ai/mem0) 的长期记忆，跨会话记忆用户偏好 |
+| `ReMeMiddleware` | 内嵌 [ReMe](https://github.com/agentscope-ai/ReMe) 应用的长期记忆，自动写回并可工具检索 |
 | `AgenticMemoryMiddleware`（v2.0.4+） | 基于文件系统（Markdown）的长期记忆，由 Agent 自主读写记忆文件 |
+| `RAGMiddleware` | 检索增强生成中间件，详见 [rag.md](rag.md) |
 
 ```python
 from agentscope.middleware import (
     ReplyBudgetControlMiddleware,
+    TracingMiddleware,
     Mem0Middleware,
+    ReMeMiddleware,
     AgenticMemoryMiddleware,
 )
 
@@ -43,12 +49,25 @@ budget = ReplyBudgetControlMiddleware(
     output_token_weight=1,         # 输出 token 权重
 )
 
+# OpenTelemetry tracing
+tracing = TracingMiddleware()
+
 # mem0 长期记忆 —— 详见下文「Mem0Middleware」小节
 longterm = Mem0Middleware(
     user_id="alice",                       # 必填
     chat_model=my_chat_model,              # 方式1: 内部构建 OSS AsyncMemory
     embedding_model=my_embedding_model,
     mode="both",                           # static_control / agent_control / both
+)
+
+# ReMe 长期记忆 —— 详见下文「ReMeMiddleware」小节
+reme_memory = ReMeMiddleware(
+    workspace_dir=".reme",
+    parameters=ReMeMiddleware.Parameters(
+        chat_model=my_chat_model,
+        embedding_model=my_embedding_model,
+        mode="both",
+    ),
 )
 
 # 文件系统长期记忆 —— 详见下文「AgenticMemoryMiddleware」小节
@@ -117,8 +136,31 @@ input_kwargs = {
 }
 
 # on_compress_context
-input_kwargs = {"context_config": ContextConfig | None}
+input_kwargs = {"context_config": ContextConfig | None, "instructions": HintBlock | None}
 ```
+
+### TracingMiddleware — OpenTelemetry 追踪
+
+`TracingMiddleware` 在 `on_reply` / `on_model_call` / `on_acting` 三层创建 OpenTelemetry span：
+reply span 记录 agent/session/reply、HITL/外部执行等待状态和最终回复；model span 记录模型调用请求与响应；
+tool span 记录工具调用与结果。未配置 OpenTelemetry SDK 时会快速透传，开销很低。
+
+```python
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry import trace
+from agentscope.middleware import TracingMiddleware
+
+trace.set_tracer_provider(TracerProvider())
+
+agent = Agent(
+    name="Assistant",
+    system_prompt="...",
+    model=model,
+    middlewares=[TracingMiddleware()],
+)
+```
+
+需要导出到 OTLP/Jaeger/控制台时，按标准 OpenTelemetry Python SDK 给 `TracerProvider` 添加 exporter/processor。
 
 ### TTSMiddleware — 语音合成（v2.0.2+）
 
@@ -215,6 +257,54 @@ agent = Agent(
 `static_control`/`both` 模式下，检索到的记忆会以 `AssistantMsg(name="memory")` 形式拼进
 `agent.state.context`；新对话在 reply 后写回 mem0。
 
+### ReMeMiddleware — ReMe 长期记忆（v2.0.4dev+）
+
+> 需额外安装：`pip install agentscope[reme]`（或 `pip install reme-ai`）。底层依赖
+> [ReMe](https://github.com/agentscope-ai/ReMe)，但中间件会在进程内嵌入 ReMe 应用，**不需要单独启动服务**。
+
+`ReMeMiddleware` 通过 `on_reply` 监听完整对话增量，并在每轮 reply 结束后调用 ReMe 的 `auto_memory`
+自动写回；agent 不会手动写记忆，也没有 `add_memory` 工具。`mode` 只控制**检索**方式：
+
+| `mode` | 自动检索 | 暴露工具 | 写回 |
+|---|---|---|---|
+| `"static_control"` | ✅ reply 开始时后台搜索，推理阶段尽力注入 | ❌ | ✅ 每轮自动 |
+| `"agent_control"` | ❌ | ✅ `memory_search` | ✅ 每轮自动 |
+| `"both"`（默认） | ✅ | ✅ `memory_search` | ✅ 每轮自动 |
+
+```python
+from agentscope.middleware import ReMeMiddleware
+from agentscope.tool import Toolkit
+
+reme_mw = ReMeMiddleware(
+    workspace_dir=".reme",          # ReMe vault / workspace
+    config="default",               # ReMe 配置名或路径
+    parameters=ReMeMiddleware.Parameters(
+        chat_model=my_chat_model,       # 可选：注入给 ReMe 的 LLM 组件
+        embedding_model=my_embedding_model,  # 可选：启用/注入向量检索
+        mode="both",
+        top_k=5,
+    ),
+)
+
+agent = Agent(
+    name="Assistant",
+    system_prompt="...",
+    model=model,
+    toolkit=Toolkit(tools=await reme_mw.list_tools()),
+    middlewares=[reme_mw],
+)
+
+# AgentScope 不托管 middleware 生命周期；应用退出时可显式关闭
+await reme_mw.close()
+```
+
+关键点：
+- ReMe 的 `session_id` 从 `agent.state.session_id` 读取，不在 middleware 构造时传入；恢复会话时应恢复
+  `AgentState(session_id=...)`。
+- `chat_model` / `embedding_model` 固定在 middleware 构造参数中，适合一个 ReMe app 共享给多个 agent。
+- 静态检索是后台任务，单次非常短的 reply 可能先结束；这种情况下本轮不注入，写回仍会执行。
+- `embedding_model` 为 `None` 时，ReMe 使用自身配置；提供 embedding 时会启用 ReMe 的向量存储接线。
+
 ### AgenticMemoryMiddleware — 文件系统长期记忆（v2.0.4+）
 
 与 `Mem0Middleware`（依赖外部 mem0）不同，`AgenticMemoryMiddleware` 把长期记忆存为工作目录下的
@@ -277,6 +367,7 @@ agent = Agent(
         TracingMiddleware(),
         TTSMiddleware(tts_model=tts_model),     # v2.0.2+
         ReplyBudgetControlMiddleware(token_budget=10000),
+        ReMeMiddleware(workspace_dir=".reme"),
     ],
 )
 ```
@@ -435,11 +526,20 @@ v2 提供 FastAPI 工厂函数，用于将 Agent 托管为 REST + SSE 服务。
 
 ```python
 from agentscope.app import create_app, SubAgentTemplate
+from agentscope.app.rag import CollectionPerKbManager, LocalBlobStore, S3BlobStore
+from agentscope.app.storage import RedisStorage
+from agentscope.app.message_bus import RedisMessageBus
+from agentscope.app.workspace_manager import LocalWorkspaceManager
 
 app = create_app(
     storage=RedisStorage(),               # 存储后端（必填）
     message_bus=RedisMessageBus(),         # 消息总线（必填）
-    workspace_manager=LocalWorkspaceManager(),  # 工作区管理器（必填）
+    workspace_manager=LocalWorkspaceManager(basedir="./workspaces"),  # 工作区管理器（必填）
+    knowledge_base_manager=None,           # 可选：启用知识库服务层
+    knowledge_parsers=None,                # 可选：Parser 列表或 media_type -> Parser dict
+    knowledge_chunker=None,                # 可选：默认 ApproxTokenChunker()
+    blob_store=None,                       # 可选：默认 LocalBlobStore("./blobs")
+    enable_index_worker=True,              # True=API 进程内嵌索引 worker
     extra_credentials=[MyCredential],      # 自定义 Credential 类
     extra_middlewares=[MyFastAPIMiddleware()],   # FastAPI 中间件（如 CORS、限流）
     extra_agent_middlewares=my_middleware_factory,  # agent 中间件工厂
@@ -456,14 +556,51 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 root.mount("/agentscope", app)
 ```
 
-> ⚠️ v2.0.2 起 `create_app` 在第三个必填参数后加了 `*`，即 `extra_*` / `custom_*` / `title` / `version`
-> 均为**仅关键字参数**；`storage` / `message_bus` / `workspace_manager` 仍可位置或关键字传递（推荐关键字）。
+> ⚠️ 当前签名中 `storage` / `message_bus` / `workspace_manager` / `knowledge_base_manager` /
+> `knowledge_parsers` / `knowledge_chunker` / `blob_store` / `enable_index_worker` 位于 `*` 之前；
+> `extra_*` / `custom_*` / `title` / `version` 均为**仅关键字参数**。推荐全部用关键字传参。
 >
 > 注意区分两类 middleware 参数：
 > - `extra_middlewares` —— 加到 **FastAPI 应用**层（ASGI 中间件，处理 CORS/鉴权/限流等 HTTP 层逻辑）。
 > - `extra_agent_middlewares` —— 加到**每个 Agent 实例**的 `MiddlewareBase` 中间件（拦截 reply/reasoning 等）。
 >
 > 另有 AG-UI 协议适配层：服务会把内部 `AgentEvent` 转换成 [AG-UI](https://docs.google.com/document/d/1F8gZV5mcrzBB_Lu6p1Tq7v5K0eJ7r5K2/) 兼容的 SSE 事件流，方便接入标准 AG-UI 客户端。
+
+### 服务化 RAG 参数
+
+`knowledge_base_manager` 不为 `None` 时，知识库路由、文档上传、后台索引和 session 级 RAG 注入会启用。
+服务层常用导入集中在 `agentscope.app.rag`：
+
+```python
+from agentscope.app.rag import (
+    CollectionPerKbManager,
+    LocalBlobStore,
+    S3BlobStore,
+    run_worker,
+)
+from agentscope.rag import QdrantStore, TextParser, PDFParser, ApproxTokenChunker
+
+vector_store = QdrantStore(url="http://localhost:6333")
+kb_manager = CollectionPerKbManager(storage=storage, vector_store=vector_store)
+
+app = create_app(
+    storage=storage,
+    message_bus=RedisMessageBus(),
+    workspace_manager=LocalWorkspaceManager(basedir="./workspaces"),
+    knowledge_base_manager=kb_manager,
+    knowledge_parsers=[TextParser(), PDFParser()],
+    knowledge_chunker=ApproxTokenChunker(chunk_size=512, overlap=50),
+    blob_store=LocalBlobStore(root_dir="./blobs"),
+    enable_index_worker=True,      # 单进程/开发：API lifespan 内启动 IndexWorker + sweeper
+)
+```
+
+BlobStore 负责保存上传文档原始字节，直到索引 worker 读取并入库：
+- `LocalBlobStore(root_dir="./blobs")`：本地开发/单节点，URI 形如 `local://...`。
+- `S3BlobStore(bucket=..., endpoint_url=...)`：S3 兼容对象存储，支持 AWS S3、MinIO、R2、OSS 等，URI 形如 `s3://bucket/key`。
+
+`enable_index_worker=False` 用于 API 与索引 worker 分离的部署。独立 worker 从 `agentscope.app.rag`
+导入 `run_worker`，复用同一组 storage/message_bus/knowledge_base_manager/blob_store/parser/chunker 配置。
 
 ### 消息总线（MessageBus）
 
@@ -547,3 +684,46 @@ app = create_app(
 单独订阅每个 worker。这是服务层行为，通过内部 `EventProjector`（`app/_service/_projectors/`）实现，
 普通开发者**无需新增 `create_app` 参数**——只要 worker 通过 `SubAgentTemplate` 创建并归属到同一个 team，
 HITL 事件就会自动冒泡到 leader session。
+
+### AgentInvite — 邀请已有 agent 入队（v2.0.4dev+）
+
+`AgentCreate` 是从 `SubAgentTemplate` **新建** worker；`AgentInvite`（leader 内置工具）则是**借用**一个
+**已存在的、用户拥有的 agent** 入队：被邀请的 agent 保留自己的 system_prompt / model / workspace / MCP /
+skills / 权限，只为团队新建一个 session 来承载并行的团队对话。团队解散或 leader 被删除时，**只清理借用的
+session，原 agent 记录不受影响**，仍可独立使用。
+
+哪些 agent 能被邀请，由其 `InviteConfig` 控制（在 `create_app` 的 agent CRUD 接口里配置）：
+
+| `InviteConfig` 字段 | 说明 |
+|---|---|
+| `invitable: bool` | 是否允许被 `AgentInvite` 借用，默认 `False` |
+| `invite_description: str \| None` | 给 leader LLM 看的简介，`invitable=True` 时**必须非空** |
+
+```python
+# 通过 REST 创建 agent 时设置（也可在 UpdateAgentRequest 中更新）
+POST /agents
+{
+  "name": "DBA助手",
+  "system_prompt": "...",
+  "invite_config": {
+    "invitable": true,
+    "invite_description": "精通 PostgreSQL/MySQL 的 DBA，可处理建表、索引、慢查询优化"
+  }
+}
+```
+
+- leader 调用 `AgentInvite` 时，`target` 参数是形如 `"AgentName@9f3c1a20"`（名字 + agent_id 前缀）的句柄。
+- 邀请产生 `role="invited"` 的 team member，与 `AgentCreate` 产生 `role="team"` 的成员区分。
+- HITL 事件投影对 invited 成员同样生效。
+
+### Session Status 端点（v2.0.4dev+）
+
+`GET /sessions/{session_id}/status?agent_id=...` 返回 session 的统一状态（合并"集群活跃度"和"持久化挂起态"
+两路信号为单一枚举），供前端轮询一个 session 当前处于什么阶段：
+
+| `SessionStatus` | 含义 |
+|---|---|
+| `running` | 有 worker 正在运行该 session |
+| `awaiting_permission` | 无 worker 运行，末尾有工具调用等待用户确认（优先级高于 external） |
+| `awaiting_external_result` | 无 worker 运行，末尾有工具调用等待外部执行结果 |
+| `idle` | 无 worker 运行，且无挂起工具调用 |

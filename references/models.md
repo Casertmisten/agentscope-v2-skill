@@ -287,7 +287,7 @@ from agentscope.tts import (
     TTSUsage,
     DashScopeTTSModel,                 # 普通非实时
     DashScopeRealtimeTTSModel,         # Qwen3 实时流式输入
-    DashScopeCosyVoiceRealtimeTTSModel,  # CosyVoice 实时流式（v2.0.3+）
+    DashScopeCosyVoiceTTSModel,        # CosyVoice 普通/实时（v2.0.4dev+）
 )
 ```
 
@@ -304,11 +304,24 @@ cards = credential.list_tts_models()
 tts = DashScopeTTSModel(credential=credential, model="qwen3-tts-flash")
 resp: TTSResponse = await tts.synthesize(text="你好")
 
-# 实时：流式输入，增量输出
+# Qwen3 实时：流式输入，增量输出
 async with DashScopeRealtimeTTSModel(credential=credential) as rt:
     await rt.push("第一段")
     chunk = await rt.push("第二段")   # 返回已合成的增量音频
     final = await rt.synthesize()      # 排空剩余音频
+
+# CosyVoice：同一类支持普通与实时，是否实时由 parameters.realtime 控制
+cosy = DashScopeCosyVoiceTTSModel(
+    credential=credential,
+    model="cosyvoice-v3-flash",
+    parameters=DashScopeCosyVoiceTTSModel.Parameters(
+        voice="longanhuan",
+        realtime=True,
+    ),
+)
+async with cosy:
+    await cosy.push("第一段")
+    final = await cosy.synthesize()
 ```
 
 TTS 的核心 API：
@@ -317,9 +330,10 @@ TTS 的核心 API：
 - `connect()` / `close()` — （仅 realtime）连接生命周期，也可用 `async with`
 - `realtime: bool` — 是否支持流式输入模式
 
-> v2.0.3 新增 `DashScopeCosyVoiceRealtimeTTSModel`（`cosyvoice-v3-plus`/`cosyvoice-v3-flash` 等），
-> 同样是 realtime 模型，用法与 `DashScopeRealtimeTTSModel` 一致。区别在于 CosyVoice 由服务端
-> 按句切分，`push` 在文本不足以成句时可能返回空，需调 `synthesize()` 强制输出剩余文本。
-> 该模型仍处于开发中，行为细节可能调整。
+> 当前本地源码导出的是 `DashScopeCosyVoiceTTSModel`，不是旧名
+> `DashScopeCosyVoiceRealtimeTTSModel`。它支持 `cosyvoice-v3-plus` / `cosyvoice-v3-flash` 等模型，
+> 构造时可用 `stream=True/False` 控制 `synthesize()` 返回增量流还是聚合结果，用
+> `Parameters(realtime=True)` 开启流式输入。CosyVoice 由服务端按句切分，`push` 在文本不足以成句时
+> 可能返回空，需调 `synthesize()` 强制输出剩余文本。该模型仍处于开发中，行为细节可能调整。
 
 > 通常无需手动调用 TTS 模型，配合 `TTSMiddleware` 即可把智能体回复自动转语音（见 middleware 文档）。

@@ -58,21 +58,22 @@ toolkit = Toolkit(tools=[Bash(), TaskCreate(), TaskList()])
 把一个带类型注解和 docstring 的 Python 函数直接传给 `FunctionTool`，框架自动从签名/docstring 生成 JSON Schema：
 
 ```python
-from agentscope.tool import FunctionTool, ToolChunk
+from agentscope.tool import FunctionTool
 
-def add_numbers(a: int, b: int) -> ToolChunk:
+def add_numbers(a: int, b: int) -> str:
     """Add two numbers together.
 
     Args:
         a: The first number
         b: The second number
     """
-    return ToolChunk(content=[TextBlock(text=str(a + b))])
+    return str(a + b)
 
 toolkit = Toolkit(tools=[FunctionTool(add_numbers)])
 ```
 
 - 支持同步/异步函数，返回 `ToolChunk`（非流式）或 `AsyncGenerator[ToolChunk]`/`Generator[ToolChunk]`（流式）。
+- 也可以直接返回 `str`、`dict`、列表等普通对象，`FunctionTool` 会自动转换成文本 `ToolChunk`。
 - `FunctionTool(func, name=..., description=..., is_concurrency_safe=True, is_read_only=False, ...)` 可覆盖默认属性。
 
 **方式 2：继承 ToolBase — 需要权限检查/状态注入等高级能力**
