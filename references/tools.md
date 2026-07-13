@@ -24,8 +24,9 @@ class ToolBase(ABC):
 async def call(self, **kwargs) -> ToolChunk | AsyncGenerator[ToolChunk, None]
 async def __call__(self, **kwargs) -> ToolChunk | AsyncGenerator[ToolChunk, None]
 async def check_permissions(tool_input, context) -> PermissionDecision
-def match_rule(rule_content, tool_input) -> bool
-def generate_suggestions(tool_input) -> list[PermissionRule]
+async def match_rule(rule_content, tool_input) -> bool
+async def generate_suggestions(tool_input) -> list[PermissionRule]
+async def check_read_only(tool_input) -> bool   # EXPLORE 模式下用于判断是否只读
 ```
 
 > v2.0.3 起，工具逻辑应重写 `call()`（而非 `__call__`）。`__call__` 已变为门面：它负责按
@@ -134,19 +135,23 @@ tool = MyTool(middlewares=[LoggingToolMiddleware()])
 
 ```python
 from agentscope.tool import ToolChunk, ToolResponse
-from agentscope.message import TextBlock, DataBlock
+from agentscope.message import TextBlock, DataBlock, ToolResultState
 
 # 工具返回增量块
 ToolChunk(
     content=[TextBlock(text="部分结果")],
     state=ToolResultState.RUNNING,
     is_last=False,               # 是否最后一个块
+    id="call-xxx",               # 可选：对应 ToolCallBlock.id，用于配对
+    metadata={},                 # 可选：工具元数据
 )
 
 # 最终累积的完整结果
 ToolResponse(
     content=[TextBlock(text="完整结果")],
     state=ToolResultState.SUCCESS,
+    id="call-xxx",               # 可选
+    metadata={},                 # 可选
 )
 ```
 
@@ -190,7 +195,7 @@ tool = await toolkit.check_tool_available("bash", activated_groups=["basic"])
 
 # Skill 相关
 instructions = await toolkit.get_skill_instructions()  # 获取 skill 提示
-instructions = await toolkit.get_skill_instructions(groups=["basic"])
+instructions = await toolkit.get_skill_instructions(activated_groups=["basic"])  # 注意参数名
 ```
 
 ## ToolGroup

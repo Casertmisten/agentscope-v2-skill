@@ -101,7 +101,7 @@ model_config = ModelConfig(
 context_config = ContextConfig(
     trigger_ratio=0.8,        # token 使用比例阈值（>0, <0.9）
     reserve_ratio=0.1,        # 压缩后保留比例（>0, <0.9）
-    tool_result_limit=3000,   # 工具结果 token 上限
+    tool_result_limit=50000,   # 工具结果 token 上限，默认 50000
     compression_prompt="...", # 自定义压缩提示
     summary_template="...",   # 自定义摘要模板
     summary_schema={...},     # 自定义摘要 JSON Schema（默认使用 SummarySchema）
@@ -128,7 +128,7 @@ context_config = ContextConfig(
 | `DataBlockDeltaEvent` | 数据增量（base64） |
 | `DataBlockEndEvent` | 数据块结束 |
 | `HintBlockEvent` | 提示块事件 |
-| `ToolCallStartEvent` | 工具调用开始（含 tool_call_id, name） |
+| `ToolCallStartEvent` | 工具调用开始（含 tool_call_id, tool_call_name） |
 | `ToolCallDeltaEvent` | 工具参数增量（JSON 片段） |
 | `ToolCallEndEvent` | 工具调用结束 |
 | `ToolResultStartEvent` | 工具结果开始 |
@@ -141,6 +141,7 @@ context_config = ContextConfig(
 | `UserConfirmResultEvent` | 用户确认结果（用于继续回复） |
 | `ExternalExecutionResultEvent` | 外部执行结果（用于继续回复） |
 | `UserInterruptEvent` | 用户中断（用于中止一个 parked reply，v2.0.4+） |
+| `CustomEvent` | 服务层自定义事件（type=`"CUSTOM"`，含 name/value，用于中间件通知前端状态/团队成员/权限变更等） |
 
 ### 所有事件的公共字段
 

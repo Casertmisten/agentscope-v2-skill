@@ -121,7 +121,7 @@ from agentscope.agent import ContextConfig
 config = ContextConfig(
     trigger_ratio=0.8,      # token 使用超过 80% 时触发压缩
     reserve_ratio=0.1,      # 压缩后保留 10% 的空间
-    tool_result_limit=3000, # 工具结果最大 token 数
+    tool_result_limit=50000, # 工具结果最大 token 数（默认 50000）
     compression_prompt="...",  # 压缩提示词
     summary_template="...",    # 摘要模板
     summary_schema={...},      # 摘要 JSON Schema

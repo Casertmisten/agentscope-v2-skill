@@ -54,7 +54,21 @@ class PermissionBehavior(Enum):
 
 ## PermissionDecision
 
-工具调用前的权限检查结果：
+`PermissionDecision` 是 **dataclass**（不是枚举），`check_permissions` 必须返回它的实例。
+`behavior` 字段取上面的 `PermissionBehavior` 枚举，`message` 为必填：
+
+```python
+from agentscope.permission import PermissionDecision, PermissionBehavior
+
+PermissionDecision(
+    behavior=PermissionBehavior.ASK,   # ALLOW / DENY / ASK / PASSTHROUGH
+    message="该操作会修改文件，需确认",   # 必填：人类可读的决策说明
+    decision_reason=None,              # 可选：决策理由
+    updated_input=None,                # 可选：修改后的入参（如净化后的路径）
+    suggested_rules=None,              # 可选：建议用户应用的权限规则
+    bypass_immune=False,               # 可选：ASK 时是否禁止被 allow 规则覆盖（危险操作）
+)
+```
 
 - **ALLOW** — 允许执行
 - **DENY** — 拒绝执行
@@ -87,19 +101,27 @@ PermissionRule(
 ## ToolBase 权限方法
 
 ```python
+from agentscope.permission import PermissionDecision, PermissionBehavior, PermissionRule
+
 class MyTool(ToolBase):
     async def check_permissions(self, tool_input, context) -> PermissionDecision:
-        # 自定义权限逻辑
+        # 自定义权限逻辑；PermissionDecision 是 dataclass，不是枚举
         if is_dangerous(tool_input):
-            return PermissionDecision.ASK  # 需要用户确认
-        return PermissionDecision.ALLOW
+            return PermissionDecision(
+                behavior=PermissionBehavior.ASK,
+                message="该操作有风险，需确认",
+            )
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="安全操作",
+        )
 
-    def match_rule(self, rule_content, tool_input) -> bool:
-        # 匹配权限规则，用于自动决策
+    async def match_rule(self, rule_content, tool_input) -> bool:
+        # 匹配权限规则，用于自动决策（async）
         ...
 
-    def generate_suggestions(self, tool_input) -> list[PermissionRule]:
-        # 生成建议的权限规则（显示给用户）
+    async def generate_suggestions(self, tool_input) -> list[PermissionRule]:
+        # 生成建议的权限规则（显示给用户）（async）
         ...
 ```
 
@@ -143,9 +165,18 @@ toolkit = Toolkit(
             tools=[QueryTool()],
             mcps=[db_mcp],
         ),
+        ToolGroup(
+            name="research",
+            description="调研工具",
+            tools=[],
+            skills_or_loaders=["/path/to/skills"],  # 也可直接绑技能（见下文 Skill 系统）
+        ),
     ],
 )
 ```
+
+> `ToolGroup` 还接受 `skills_or_loaders`（字符串路径 / `Skill` / `SkillLoaderBase`），
+> 把技能直接绑定到工具组，组激活时一并加载。
 
 ### 激活/停用
 
@@ -220,7 +251,8 @@ toolkit = Toolkit(
 
 # 获取 skill 提示（可拼接到 system_prompt）
 instructions = await toolkit.get_skill_instructions()
-# 也可限定组：await toolkit.get_skill_instructions(groups=["basic"])
+# 也可限定激活的组：注意参数名是 activated_groups（与 get_tool_schemas 的 groups 不同）
+instructions = await toolkit.get_skill_instructions(activated_groups=["basic"])
 ```
 
 > Skill 不是工具——智能体需要先阅读 skill 的完整说明，再按照说明使用工具。Workspace 也可通过

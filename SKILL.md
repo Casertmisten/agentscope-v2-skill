@@ -187,7 +187,7 @@ agent = Agent(
     context_config=ContextConfig(       # 上下文压缩配置
         trigger_ratio=0.8,
         reserve_ratio=0.1,
-        tool_result_limit=3000,
+        tool_result_limit=50000,        # 工具结果 token 上限，默认 50000
     ),
     react_config=ReActConfig(           # ReAct 循环配置
         max_iters=20,

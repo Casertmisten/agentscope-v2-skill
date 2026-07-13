@@ -17,8 +17,14 @@ RAG 让 Agent 能基于外部知识库回答问题。模块组成:
 ## 安装
 
 ```bash
-# RAG 依赖(含 qdrant-client)
+# RAG 依赖(含 qdrant-client + python-docx + pandas 等)
 uv pip install "agentscope[rag]"
+
+# MilvusLiteStore 另需（pymilvus[milvus-lite]）
+uv pip install "agentscope[milvuslite]"
+
+# MongoDBStore 另需（pymongo>=4.7）
+uv pip install "agentscope[mongodb]"
 
 # 若 RAGMiddleware 与 Mem0Middleware 混用,另装
 uv pip install "agentscope[mem0]"
@@ -46,8 +52,8 @@ uv pip install "agentscope[mem0]"
 
 | Parser | 支持格式 | Section 粒度 |
 |---|---|---|
-| `TextParser` | text/markdown 等 | 整个文件为 1 个 Section(或按 Markdown 标题分段) |
-| `PDFParser` | `application/pdf` | 每页 1 个 Section,内嵌图片单列 |
+| `TextParser` | text/markdown 等 | 整个文件为 1 个 Section（不按标题切分） |
+| `PDFParser` | `application/pdf` | 每页 1 个 Section（仅文本，不提取图片） |
 | `PPTParser` | PPTX | 每张幻灯片 1 个 Section |
 | `ImageParser` | 图像 | 整个文件为 1 个 Section(多模态) |
 | `WordParser`（v2.0.4+） | `.docx` | 按文档顺序,`separate_table=True` 时表格独立成 Section |
@@ -230,7 +236,10 @@ kb = KnowledgeBase(
 | `search(queries, top_k=5, score_threshold=None)` | 批量 embed 查询 → 并发检索 → 去重(按 `document_id, chunk_index`)→ 按 score 降序截 top_k |
 | `insert_document(chunks, document_id=None, document_metadata=None)` | 批量 embed 并插入为同一文档,返回 `document_id` |
 | `delete_document(document_id)` | 按文档 id 删除其全部记录 |
-| `list_documents()` | 列出当前知识库内所有文档摘要 |
+| `list_documents()` | 列出当前知识库内所有文档摘要（返回 `list[DocumentSummary]`） |
+
+`DocumentSummary` 字段（`from agentscope.rag import DocumentSummary`）：
+`document_id: str` / `source: str` / `chunk_count: int` / `metadata: dict`
 
 关键点:
 - **索引与检索必须用同一个 embedding 模型**,否则向量不可比。
