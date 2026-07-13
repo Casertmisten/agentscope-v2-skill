@@ -43,6 +43,7 @@ async for event in agent.reply_stream(user_msg):
 - `Msg | list[Msg]` — 新消息触发推理
 - `UserConfirmResultEvent` — 用户确认结果（继续之前的暂停）
 - `ExternalExecutionResultEvent` — 外部执行结果
+- `UserInterruptEvent` — 中断一个 parked reply（见下文「Agent 中断」）
 - `None` — 从当前状态继续
 
 #### reply — 获取最终消息
@@ -78,6 +79,10 @@ await agent.compress_context(instructions=HintBlock(hint="保留 API 迁移决�
 react_config = ReActConfig(
     max_iters=20,            # 推理-行动最大迭代次数
     stop_on_reject=False,    # 工具被拒绝时是否停止
+    interruption_message="I notice the interruption. How can I help you?",
+    # 中断事件触发后，agent 回退并产出的替代文案（见下文「Agent 中断」）
+    interruption_raise_cancelled_error=False,
+    # True: 处理完中断后重新抛 CancelledError；False: 静默结束 reply
 )
 ```
 
@@ -135,6 +140,7 @@ context_config = ContextConfig(
 | `RequireExternalExecutionEvent` | 需要外部执行（含 tool_calls） |
 | `UserConfirmResultEvent` | 用户确认结果（用于继续回复） |
 | `ExternalExecutionResultEvent` | 外部执行结果（用于继续回复） |
+| `UserInterruptEvent` | 用户中断（用于中止一个 parked reply，v2.0.4+） |
 
 ### 所有事件的公共字段
 
@@ -246,3 +252,36 @@ async for event in agent.reply_stream(user_msg):
 print(final_msg.get_text_content())
 print(final_msg.usage)
 ```
+
+### Agent 中断（v2.0.4+）
+
+当 agent 处于 parked 状态（等待 HITL 用户确认 / 外部执行结果）时，可向它发送
+`UserInterruptEvent` 来中止这次 reply：
+
+```python
+from agentscope.event import UserInterruptEvent
+
+# reply_id 指向那个正在等待确认/外部结果的 reply
+await agent.reply(UserInterruptEvent(reply_id="原reply_id"))
+```
+
+收到 `UserInterruptEvent` 后，agent 会：
+1. 把所有 pending 的 tool call 关闭为 `interrupted` 结果；
+2. emit 一条 fallback 助手消息（文案由 `ReActConfig.interruption_message` 控制）；
+3. 以 `ReplyEndReason.INTERRUPTED` 结束 reply，**不进入** reasoning-acting 循环。
+
+`ReplyEndEvent` 的 `finished_reason` 取值（`ReplyEndReason` 枚举）：
+
+| 值 | 含义 |
+|---|---|
+| `completed` | 正常完成 |
+| `interrupted` | 被 `UserInterruptEvent` 中断 |
+| `exceed_max_iters` | 超过 `ReActConfig.max_iters` |
+
+> 注意区分两类「中断」：
+> - **parked reply 的中断**：用 `UserInterruptEvent`（本文所述），针对等待 HITL/外部结果的 reply。
+> - **running reply 的取消**：直接取消驱动 `reply_stream` 的底层 asyncio task，agent 经
+>   `CancelledError` 清理路径（`ReActConfig.interruption_raise_cancelled_error=True` 时会在
+>   清理后重新抛出，便于上层捕获）。
+>
+> 服务化场景下，HTTP 端 `POST /sessions/{sid}/interrupt` 会派发 `UserInterruptEvent`。

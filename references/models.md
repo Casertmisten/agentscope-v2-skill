@@ -232,7 +232,8 @@ from agentscope.embedding import (
 
 ### 构造（标准化参数）
 
-所有 provider 的构造签名一致（除 OpenAI 多一个 `pass_dimensions`）：
+所有 provider 的构造签名一致：前三个位置参数固定为 `credential` / `model` / `dimensions`，
+其中 `dimensions`（输出向量维度）是**必填契约参数**（仅 OpenAI 多一个 `pass_dimensions`）：
 
 ```python
 from agentscope.credential import OpenAICredential
@@ -241,7 +242,8 @@ credential = OpenAICredential(api_key="sk-xxx")
 emb_model = OpenAIEmbeddingModel(
     credential=credential,
     model="text-embedding-3-small",
-    parameters=None,            # 各 provider 的 Parameters 子类；None 用默认（dimensions=512）
+    dimensions=512,             # 必填：输出向量维度（契约参数）
+    parameters=None,            # 各 provider 的 Parameters 子类；None 用默认
     pass_dimensions=True,       # 仅 OpenAI：是否把 dimensions 发给 API（默认 True）
     context_size=8191,          # 单条输入 token 上限（OpenAI 默认 8191，其余 8192）
     max_retries=3,              # 每批重试次数（默认 3）
@@ -249,6 +251,10 @@ emb_model = OpenAIEmbeddingModel(
     # batch_size 由各 provider 内部定（如 OpenAI=2048, Gemini=100, Ollama=512）
 )
 ```
+
+> `dimensions=None` 仅为兼容旧配置（从 `parameters` 里读）而保留，新代码应显式传入。
+> 不同 embedding 模型支持的维度集合不同，选不支持的值会被服务端拒绝——可用
+> `credential.list_models()` 查 ModelCard 的 `supported_dimensions`。
 
 调用（模型是 callable，返回 `EmbeddingResponse`）：
 
@@ -285,9 +291,10 @@ from agentscope.tts import (
     TTSModelCard,
     TTSResponse,
     TTSUsage,
+    OpenAITTSModel,                    # OpenAI TTS（tts-1/tts-1-hd/gpt-4o-mini-tts）
     DashScopeTTSModel,                 # 普通非实时
     DashScopeRealtimeTTSModel,         # Qwen3 实时流式输入
-    DashScopeCosyVoiceTTSModel,        # CosyVoice 普通/实时（v2.0.4dev+）
+    DashScopeCosyVoiceTTSModel,        # CosyVoice 普通/实时（v2.0.4+）
 )
 ```
 
@@ -314,6 +321,9 @@ async with DashScopeRealtimeTTSModel(credential=credential) as rt:
 cosy = DashScopeCosyVoiceTTSModel(
     credential=credential,
     model="cosyvoice-v3-flash",
+    cold_start_length=10,        # 可选：冷启动预热字数
+    max_retries=3,               # 可选：WebSocket 断线重连次数
+    retry_delay=5.0,             # 可选：重连间隔
     parameters=DashScopeCosyVoiceTTSModel.Parameters(
         voice="longanhuan",
         realtime=True,
@@ -323,6 +333,35 @@ async with cosy:
     await cosy.push("第一段")
     final = await cosy.synthesize()
 ```
+
+### OpenAITTSModel（v2.0.4+）
+
+基于 OpenAI TTS API 的非实时模型（`realtime=False`），支持 `tts-1` / `tts-1-hd` / `gpt-4o-mini-tts`：
+
+```python
+from agentscope.credential import OpenAICredential
+from agentscope.tts import OpenAITTSModel
+
+credential = OpenAICredential(api_key="sk-xxx")
+tts = OpenAITTSModel(
+    credential=credential,
+    model="gpt-4o-mini-tts",   # 或 tts-1 / tts-1-hd
+    parameters=OpenAITTSModel.Parameters(
+        voice="alloy",                      # 音色：alloy/echo/fable/onyx/nova/shimmer 等
+        response_format="mp3",              # mp3/opus/aac/flac/wav/pcm
+        instructions=None,                  # 仅 gpt-4o-mini-tts 支持：自然语言风格指令
+    ),
+    stream=True,               # stream=True 时 synthesize() 返回增量流
+)
+# stream=True：synthesize() 返回 async generator，逐块 yield TTSResponse（每块含增量音频，末块 is_last=True）
+# stream=False：synthesize() 返回单个聚合的 TTSResponse
+async for resp in await tts.synthesize(text="你好"):
+    ...
+```
+
+> 各提供商的 TTS 能力：OpenAI 提供 `OpenAITTSModel`（非实时），DashScope 提供
+> `DashScopeTTSModel`（普通）/`DashScopeRealtimeTTSModel`（Qwen3 实时）/`DashScopeCosyVoiceTTSModel`
+> （CosyVoice 普通+实时）；其余提供商（Anthropic/Gemini/Ollama 等）当前不提供 TTS，`get_tts_model_classes()` 返回空列表。
 
 TTS 的核心 API：
 - `synthesize(text)` — 阻塞直到整句合成完成

@@ -93,6 +93,9 @@ ToolCallBlock(
 )
 ```
 
+> `id` 字段（v2.0.4+）承载 provider 的 call_id（如 OpenAI Responses API 返回的 `call_id`），
+> 用于把后续 `ToolResultBlock` 与对应的工具调用配对。不再用 `extra="allow"` 容纳 provider 私有字段。
+
 ToolCallState 状态流转：
 ```
 pending → asking (需用户确认) → allowed (用户允许) → finished

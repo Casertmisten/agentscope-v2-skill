@@ -257,7 +257,7 @@ agent = Agent(
 `static_control`/`both` 模式下，检索到的记忆会以 `AssistantMsg(name="memory")` 形式拼进
 `agent.state.context`；新对话在 reply 后写回 mem0。
 
-### ReMeMiddleware — ReMe 长期记忆（v2.0.4dev+）
+### ReMeMiddleware — ReMe 长期记忆（v2.0.4+）
 
 > 需额外安装：`pip install agentscope[reme]`（或 `pip install reme-ai`）。底层依赖
 > [ReMe](https://github.com/agentscope-ai/ReMe)，但中间件会在进程内嵌入 ReMe 应用，**不需要单独启动服务**。
@@ -438,17 +438,118 @@ from agentscope.tool import BackendBase, LocalBackend, ExecResult
 ```
 
 > ℹ️ 普通用 `LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace` 的开发者无需手动构造 Backend——workspace 内部会自行创建。
+> `K8sBackend` / `OpenSandboxBackend` 也已对外导出,`DockerWorkspace` 之外的两个沙箱后端同理。
+
+### K8sWorkspace — K8s Pod 工作区（v2.0.4+）
+
+基于 `kubernetes_asyncio` 管理 Pod + PVC 生命周期，适合在自有 K8s 集群中为每个智能体分配
+带持久化卷的隔离执行环境。文件 I/O 走 **tar-over-exec**（因 `kubernetes_asyncio` 的 WebSocket
+对原始二进制流不可靠）:
+
+```python
+from agentscope.workspace import K8sWorkspace
+
+workspace = K8sWorkspace(
+    workspace_id=None,                # None 时自动生成;给定则按 label 复用已有 Pod
+    kubeconfig=None,                  # None 用集群内 ServiceAccount;本地开发传 ~/.kube/config 路径
+    namespace="agentscope",           # 目标命名空间
+    image="python:3.11-slim",         # Pod 镜像
+    image_pull_policy="IfNotPresent",
+    image_pull_secrets=None,          # 私有仓库的 Secret 名列表
+    resources=None,                   # 资源请求/限制,透传给 Pod spec
+    node_selector=None, tolerations=None, service_account=None,
+    gateway_port=DEFAULT_GATEWAY_PORT,
+    extra_pip=None,                   # bootstrap 时额外 pip install 的包
+    # PVC 持久化(Pod 重启后 /workspace 仍在)
+    storage_class=None,               # None 用集群默认 StorageClass
+    storage_size="1Gi",
+    delete_pvc_on_close=False,        # True: close 时连 PVC 一起删;False: 只删 Pod,数据保留
+    env=None,                         # Pod 环境变量
+    instructions=_DEFAULT_INSTRUCTIONS,
+    default_mcps=None, skill_paths=None,
+)
+# 必须先 initialize(或用 async with)
+```
+
+关键点:
+- PVC 名固定为 `as-ws-{workspace_id}`,挂载到 `/workspace`,Pod 被删/重建后数据仍在。
+- `initialize()` 按 label `agentscope.workspace.id` 查找 Pod:Running 则复用,Failed/Unknown 则重建。
+- `close()` 删 Pod;`delete_pvc_on_close=True` 才会连 PVC 一起删。
+- bootstrap 阶段会在 Pod 内安装 `ripgrep`/`uv`/`curl` 并建 venv,首次启动较慢。
+
+### OpenSandboxWorkspace — OpenSandbox 工作区（v2.0.4+）
+
+基于 [OpenSandbox](https://github.com/herenchn/open-sandbox) SDK,适合用托管沙箱服务
+替代自建 Docker/K8s。文件 I/O 走 SDK 原生 `files.read_bytes` / `files.write_files`,
+exec 走 `commands.run`:
+
+```python
+from agentscope.workspace import OpenSandboxWorkspace
+
+workspace = OpenSandboxWorkspace(
+    workspace_id=None,                # None 自动生成;给定则按 sandbox metadata 复用
+    image=DEFAULT_IMAGE,
+    api_key="",                       # OpenSandbox 服务 API key
+    domain="", protocol="http",
+    request_timeout_seconds=DEFAULT_REQUEST_TIMEOUT,
+    timeout_seconds=DEFAULT_TIMEOUT,
+    gateway_port=DEFAULT_GATEWAY_PORT,
+    env=None, sandbox_metadata=None, resource=None,
+    entrypoint=None, network_policy=None, extra_pip=None,
+    instructions=_DEFAULT_INSTRUCTIONS,
+    default_mcps=None, skill_paths=None,
+)
+```
+
+关键点:
+- 通过 `Sandbox.create/connect/resume` 管理 sandbox;AgentScope 把 workspace_id 存进
+  sandbox 的 `agentscope.workspace.id` metadata 键,用于后续查找并重新挂载。
+- `close()` 调用 `sandbox.pause()`——**只暂停不销毁**,文件系统保留,下次可 resume,适合
+  频繁启停的场景。
+- bootstrap 阶段在 sandbox 内安装 `ripgrep`/`uv`/`curl` 并建 venv。
+
+### WorkspaceManager（服务化）
+
+服务化部署（`create_app`）通过 `WorkspaceManager` 按用户/agent/session 隔离策略派发 workspace
+实例,并带 TTL 缓存 + 后台 sweeper 自动清理空闲 workspace。五种实现对应五种后端:
+
+```python
+from agentscope.app.workspace_manager import (
+    LocalWorkspaceManager, DockerWorkspaceManager, E2BWorkspaceManager,
+    K8sWorkspaceManager, OpenSandboxWorkspaceManager,   # v2.0.4+
+    IsolationPolicy,  # PER_AGENT / PER_USER / PER_SESSION
+)
+
+# K8s 集群部署示例
+ws_manager = K8sWorkspaceManager(
+    isolation=IsolationPolicy.PER_AGENT,
+    namespace="agentscope",
+    image="python:3.11-slim",
+    storage_size="1Gi",
+    ttl=3600.0,           # 空闲 workspace 存活时间(秒)
+    sweep_interval=300.0, # sweeper 扫描间隔
+    delete_pvc_on_close=False,
+    default_mcps=None, skill_paths=None,
+)
+app = create_app(..., workspace_manager=ws_manager)
+```
+
+- 所有 manager 共享同一套 API:`get_workspace(user_id, agent_id, session_id, workspace_id=None)` /
+  `close(workspace_id)` / `close_all()`,调用方无需关心后端类型。
+- `__aenter__` 启动后台 sweeper,`__aexit__` 停止 sweeper 并 `close_all()`。
 
 ### 三种 Workspace 都支持内置工具（v2.0.3+）
 
-`LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace` 均实现了 `list_tools()`，返回六个内置工具
-（Bash/Read/Write/Edit/Grep/Glob）。区别仅在于**执行后端**：
+`LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace` / `K8sWorkspace` / `OpenSandboxWorkspace`
+均实现了 `list_tools()`，返回六个内置工具（Bash/Read/Write/Edit/Grep/Glob）。区别仅在于**执行后端**：
 
 | Workspace | 内置工具执行位置 |
 |---|---|
 | `LocalWorkspace` | 本地文件系统（`LocalBackend`） |
 | `DockerWorkspace` | 容器内（`DockerBackend`） |
 | `E2BWorkspace` | E2B 云沙箱内（`E2BBackend`，路径 `/home/user/workspace`） |
+| `K8sWorkspace`（v2.0.4+） | K8s Pod 内（`K8sBackend`，tar-over-exec 文件 I/O） |
+| `OpenSandboxWorkspace`（v2.0.4+） | OpenSandbox 内（`OpenSandboxBackend`，SDK 原生 files API） |
 
 ```python
 # E2B/Docker workspace 必须先 initialize（或用 async with），才能取内置工具
@@ -546,6 +647,7 @@ app = create_app(
     extra_agent_tools=my_tool_factory,     # agent 工具工厂
     custom_subagent_templates=[...],       # 子智能体模板（v2.0.2+）
     custom_agent_cls=MyAgent,              # 自定义 Agent 子类（v2.0.2+）
+    resource_access_policy=None,           # 跨用户资源共享策略（v2.0.4+）
 )
 
 # 独立运行
@@ -685,7 +787,7 @@ app = create_app(
 普通开发者**无需新增 `create_app` 参数**——只要 worker 通过 `SubAgentTemplate` 创建并归属到同一个 team，
 HITL 事件就会自动冒泡到 leader session。
 
-### AgentInvite — 邀请已有 agent 入队（v2.0.4dev+）
+### AgentInvite — 邀请已有 agent 入队（v2.0.4+）
 
 `AgentCreate` 是从 `SubAgentTemplate` **新建** worker；`AgentInvite`（leader 内置工具）则是**借用**一个
 **已存在的、用户拥有的 agent** 入队：被邀请的 agent 保留自己的 system_prompt / model / workspace / MCP /
@@ -716,7 +818,7 @@ POST /agents
 - 邀请产生 `role="invited"` 的 team member，与 `AgentCreate` 产生 `role="team"` 的成员区分。
 - HITL 事件投影对 invited 成员同样生效。
 
-### Session Status 端点（v2.0.4dev+）
+### Session Status 端点（v2.0.4+）
 
 `GET /sessions/{session_id}/status?agent_id=...` 返回 session 的统一状态（合并"集群活跃度"和"持久化挂起态"
 两路信号为单一枚举），供前端轮询一个 session 当前处于什么阶段：
@@ -727,3 +829,58 @@ POST /agents
 | `awaiting_permission` | 无 worker 运行，末尾有工具调用等待用户确认（优先级高于 external） |
 | `awaiting_external_result` | 无 worker 运行，末尾有工具调用等待外部执行结果 |
 | `idle` | 无 worker 运行，且无挂起工具调用 |
+
+### 跨用户资源共享（ResourceAccessPolicy，v2.0.4+）
+
+服务层把"谁能看/改谁的资源"抽成**可注入的策略基类**——这是服务端（REST 层）的扩展点,不是 SDK 层 API。
+AgentScope **自身不存储** group/org/share 记录,group/org 的成员表、共享规则由部署方自行实现
+（从配置、LDAP、外部 IAM 等读取）。默认实现 `DenyAllResourceAccessPolicy` 拒绝一切跨用户访问,
+保持历史 owner 隔离行为。
+
+**可共享的三种资源**:`credential` / `agent` / `knowledge_base`。
+
+```python
+from agentscope.app.access import (
+    ResourceAccessPolicyBase,   # 抽象基类,部署方继承它
+    ResourceKind,               # CREDENTIAL / AGENT / KNOWLEDGE_BASE
+    ResourcePermission,         # READ / EDIT(EDIT 蕴含 READ)
+    ResourceRef,                # 策略返回的跨 owner 资源引用
+)
+
+class OrgPolicy(ResourceAccessPolicyBase):
+    """示例:按组织成员表共享资源。group/org 成员关系存在你自己的存储里。"""
+    async def list_accessible(
+        self, viewer_id: str, kind: ResourceKind, storage,
+    ) -> list[ResourceRef]:
+        # 查你自己的成员表,返回该 viewer 能看到的(其他 owner 的)资源引用
+        return [
+            ResourceRef(
+                kind=kind,
+                owner_id="alice",           # 资源所有者的 user_id
+                resource_id="cred-openai",  # 目标资源 id
+                permission=ResourcePermission.READ,
+            ),
+            ...
+        ]
+
+    # 可选:更细粒度的写权限判断(默认按 list_accessible 返回的 permission)
+    async def can_edit(self, viewer_id, kind, owner_id, resource_id, storage) -> bool:
+        ...
+
+app = create_app(
+    ...,
+    resource_access_policy=OrgPolicy(),  # 不传则用 DenyAllResourceAccessPolicy
+)
+```
+
+行为细节:
+- 注入策略后,**既有 CRUD 端点自动透明支持跨 owner 资源**——无需新增 `/groups`、`/share` 端点。
+  `GET /credential` / `GET /agent` / `GET /knowledge_bases` 会把"自有(editable=True)"和
+  "策略授予的跨 owner 项"合并返回(共享 credential 的 `data` 字段对非所有者脱敏,只剩 `type`/`name`)。
+- `PATCH` / `DELETE` 先经 `resolve_for_edit` 拿到 `owner_id`,再通过所有者的 storage key 回写——
+  即「shared editor writes back through the owning user's storage key」。
+- runtime 路径(chat / embedding / model / tts_model / knowledge_base / toolkit router)改用
+  `resolve_credential/resolve_agent/resolve_knowledge_base`,拿到未脱敏的原始记录正常跑 agent。
+- `source == "team"` 的 agent(团队 worker)被显式排除在共享之外。
+- 共享关系完全由策略实现决定,不落进 AgentScope 自己的存储 schema。`TeamMember.owner_id` 字段
+  就是为此预留,文档原话:"a future admin-share layer can slot in without a schema migration"。

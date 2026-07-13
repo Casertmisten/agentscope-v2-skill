@@ -7,8 +7,11 @@ RAG 让 Agent 能基于外部知识库回答问题。模块组成:
 - **`KnowledgeBase`** —— 运行时句柄,绑定 (embedding 模型 + 向量库 + collection),暴露 search/insert/delete/list 四个操作
 - **`QdrantStore`** —— 内置向量库后端(基于 Qdrant)
 - **`MilvusLiteStore`**（v2.0.4+）—— 嵌入式向量库后端(基于 Milvus Lite,无需独立服务)
+- **`MongoDBStore`**（v2.0.4+）—— MongoDB Atlas 向量库后端(基于 `$vectorSearch`)
 - **`VectorStoreBase`** —— 向量库抽象基类,可子类化扩展其它后端
 - **Parser / Chunker** —— 文档解析与切分管线(`bytes → Section[] → Chunk[]`)
+  - 文本 `TextParser`、PDF `PDFParser`、PPT `PPTParser`、图像 `ImageParser`
+  - Word `WordParser`（v2.0.4+）、Excel `ExcelParser`（v2.0.4+）
 - **`RAGMiddleware`** —— 把知识库接入 Agent,两种模式:static(自动注入)/ agentic(工具驱动)
 
 ## 安装
@@ -39,7 +42,7 @@ uv pip install "agentscope[mem0]"
 
 ### Parser —— 按格式解析为 Section
 
-`ParserBase` 子类各管一种文件格式,**不做切分**,只保留文档的自然结构边界(一页 PDF、一张幻灯片、一个 Markdown 标题段)。4 个内置实现:
+`ParserBase` 子类各管一种文件格式,**不做切分**,只保留文档的自然结构边界(一页 PDF、一张幻灯片、一个 Markdown 标题段)。6 个内置实现:
 
 | Parser | 支持格式 | Section 粒度 |
 |---|---|---|
@@ -47,6 +50,34 @@ uv pip install "agentscope[mem0]"
 | `PDFParser` | `application/pdf` | 每页 1 个 Section,内嵌图片单列 |
 | `PPTParser` | PPTX | 每张幻灯片 1 个 Section |
 | `ImageParser` | 图像 | 整个文件为 1 个 Section(多模态) |
+| `WordParser`（v2.0.4+） | `.docx` | 按文档顺序,`separate_table=True` 时表格独立成 Section |
+| `ExcelParser`（v2.0.4+） | `.xlsx` / `.xls` | `separate_sheet=True` 时每个 sheet 一个 Section(含 `metadata={"sheet": name}`);默认合并为一个 Section |
+
+Word/Excel Parser 针对表格场景增加配置:
+
+```python
+from agentscope.rag import WordParser, ExcelParser
+
+word = WordParser(
+    include_image=True,               # 是否提取内嵌图片(默认 True)
+    separate_table=False,             # True: 每个表格独立 Section;False: 内联在正文中
+    table_format="markdown",          # "markdown" | "json"
+)
+sections = await word.parse(file=b"<docx bytes>", filename="spec.docx")  # file 也可传路径 str
+
+excel = ExcelParser(
+    include_sheet_names=True,         # 文本里带 sheet 名(默认 True)
+    include_cell_coordinates=False,   # JSON 输出里带 [A1] 坐标(默认 False)
+    include_image=False,              # 提取内嵌图片(需 openpyxl,默认 False)
+    separate_sheet=False,             # True: 每 sheet 一个 Section;False: 合并
+    table_format="markdown",          # "markdown" | "json"
+)
+sections = await excel.parse(file="/path/sales.xlsx", filename="sales.xlsx")
+```
+
+- WordParser 依赖 `python-docx`,ExcelParser 依赖 `pandas`(图片提取另需 `openpyxl`),均延迟导入,缺失时抛指向 `pip install agentscope[rag]` 的 `ImportError`。
+- 表格统一渲染为 markdown 管道表或 JSON 行(由 `table_format` 控制),`invalid` 值会抛 `ValueError`。
+- 没有专门的「表格分块器」——表格先被 parser 转成文本,再由同一个 `ApproxTokenChunker` 按近似 token 切;要保留表格/sheet 边界,设 `separate_table=True` / `separate_sheet=True`(Section 是硬边界,Chunker 不会跨 Section 合并)。
 
 ```python
 from agentscope.rag import TextParser
@@ -119,7 +150,13 @@ store = QdrantStore(path="./qdrant_data")         # 本地磁盘持久化
 ```python
 from agentscope.rag import MilvusLiteStore
 
-store = MilvusLiteStore(uri="./milvus_data.db")   # 本地文件持久化
+store = MilvusLiteStore(
+    uri="./milvus_data.db",       # 本地 .db 文件路径（Milvus Lite 据此启动嵌入式服务）
+    metric_type="COSINE",          # 距离度量：COSINE / IP / L2
+    index_type="AUTOINDEX",        # 索引类型，默认 AUTOINDEX
+    client_kwargs=None,            # 透传给 pymilvus.MilvusClient 的额外参数
+    batch_size=256,                # 插入/检索批量大小
+)
 # 同样需用 async with 进出
 ```
 
@@ -130,6 +167,44 @@ store = MilvusLiteStore(uri="./milvus_data.db")   # 本地文件持久化
 - `QdrantStore(location=":memory:")` —— 纯内存,最快,适合单元测试。
 - `QdrantStore(url=...)` —— 生产部署,需要独立 Qdrant 服务。
 - `MilvusLiteStore(uri="./x.db")` —— 嵌入式,无需服务,适合单机轻量场景。
+- `MongoDBStore(uri=..., database=...)` —— 已有 MongoDB Atlas/副本集时复用,过滤字段需在建索引前声明。
+
+## MongoDBStore —— MongoDB 向量库后端（v2.0.4+）
+
+`MongoDBStore` 基于 [MongoDB Atlas Vector Search](https://www.mongodb.com/docs/atlas/atlas-vector-search/)
+（或自托管副本集,7.0+）。底层用 `pymongo.AsyncMongoClient`(`pymongo>=4.7`),全异步非阻塞:
+
+```bash
+uv pip install "agentscope[mongodb]"   # 装 pymongo>=4.7
+```
+
+```python
+from agentscope.rag import MongoDBStore
+
+store = MongoDBStore(
+    uri="mongodb+srv://user:pass@cluster.mongodb.net",  # 或副本集 mongodb://host:27017
+    database="agentscope_rag",          # MongoDB 数据库名(必填)
+    distance="cosine",                  # "cosine"(默认) | "euclidean" | "dotProduct"
+    index_name="vector_index",          # 向量索引名,默认 "vector_index"
+    filter_fields=None,                 # 预声明可过滤字段,详见下文
+    client_kwargs=None,                 # 透传给 AsyncMongoClient 的额外参数
+)
+# 需用 async with 进出
+```
+
+> **`filter_fields`（MongoDB 独有）**:MongoDB 的 `$vectorSearch` 要求用于预过滤的字段
+> **必须提前在索引定义中声明**,不能像 Qdrant 那样运行时动态过滤。构造时传入
+> `filter_fields=["document_id", "tenant_id"]` 后,`KnowledgeBase` 的 `metadata_filter`
+> 和 `search(metadata_filter=...)` 才能按这些字段过滤。这三个 Store 中,只有 `MongoDBStore`
+> 需要预先声明过滤字段。
+
+三个 Store 的度量/过滤对比:
+
+| 维度 | `QdrantStore` | `MilvusLiteStore` | `MongoDBStore` |
+|---|---|---|---|
+| 度量类型 | `Cosine`/`Dot`/`Euclid`/`Manhattan` | `COSINE`/`IP`/`L2` | `cosine`/`euclidean`/`dotProduct` |
+| 动态 metadata 过滤 | ✅ 运行时 | ✅ 运行时 | ❌ 需 `filter_fields` 预声明 |
+| 额外参数 | — | `batch_size` | `database` / `index_name` / `filter_fields` |
 
 ## KnowledgeBase —— 运行时句柄
 

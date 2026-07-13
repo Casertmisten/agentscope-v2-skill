@@ -10,16 +10,18 @@ MCPClient 集成、AgentState 状态管理、Event 事件系统、Permission 权
 Middleware 中间件（含 TTSMiddleware / ReplyBudgetControlMiddleware / TracingMiddleware / Mem0Middleware 跨会话长期记忆 /
 ReMeMiddleware 内嵌 ReMe 长期记忆 / AgenticMemoryMiddleware 文件系统长期记忆 / RAGMiddleware 检索增强）、Workspace 工作区（三种 Workspace 均支持
 内置工具，Backend 抽象：LocalBackend / DockerBackend / E2BBackend）、Embedding/TTS 多模态模型
-（Embedding v2.0.3 重构为泛型基类 + FileEmbeddingCache 文件缓存）、RAG 知识库（agentscope.rag：
+（Embedding v2.0.3 重构为泛型基类，dimensions 必填 + FileEmbeddingCache 文件缓存；TTS 含 OpenAITTSModel /
+DashScope CosyVoice 等）、RAG 知识库（agentscope.rag：
 KnowledgeBase / QdrantStore / MilvusLiteStore / Parser-Chunker 管线 / RAGMiddleware static+agentic 双模式）、
-SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影）、App 服务化（含 KnowledgeBaseManager /
+SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影 + AgentInvite 邀请已有 agent）、App 服务化（含 KnowledgeBaseManager /
 BlobStore / 内嵌或独立索引 worker / MessageBus 消息总线：
-RedisMessageBus / InMemoryMessageBus）、set_id_factory 全局 ID 工厂等。
+RedisMessageBus / InMemoryMessageBus / Session Status 端点）、Agent 中断（UserInterruptEvent）、
+跨用户资源共享（ResourceAccessPolicy 抽象）、set_id_factory 全局 ID 工厂等。
 ---
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
 
-AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.4dev`。
+AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.4`。
 
 **核心特性**：事件驱动架构、权限系统、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
 REST+SSE 智能体服务（MessageBus 消息总线，含 InMemoryMessageBus 单节点轻量选项）、三种 Workspace 均支持
@@ -27,12 +29,15 @@ REST+SSE 智能体服务（MessageBus 消息总线，含 InMemoryMessageBus 单�
 TTSMiddleware / ReplyBudgetControlMiddleware / TracingMiddleware OpenTelemetry 追踪 /
 Mem0Middleware 跨会话长期记忆 / ReMeMiddleware 内嵌 ReMe 长期记忆 / AgenticMemoryMiddleware
 文件系统长期记忆（v2.0.4+）/ RAGMiddleware 检索增强）、工具级洋葱中间件（ToolMiddlewareBase）、
-Embedding/TTS 多模态模型（Embedding v2.0.3 重构为泛型基类 + 多模态路由 + FileEmbeddingCache 文件缓存）、
+Embedding/TTS 多模态模型（Embedding v2.0.3 重构为泛型基类，dimensions 为必填契约参数 + 多模态路由 + FileEmbeddingCache 文件缓存；
+TTS 含 OpenAITTSModel / DashScopeTTSModel / DashScopeRealtimeTTSModel / DashScopeCosyVoiceTTSModel）、
 RAG 知识库（agentscope.rag：KnowledgeBase + QdrantStore + MilvusLiteStore（v2.0.4+）+ Parser/Chunker 索引管线 +
 RAGMiddleware static/agentic 双模式）、SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影 +
-v2.0.4dev AgentInvite 邀请已有 agent 入队）、服务化知识库（KnowledgeBaseManager + LocalBlobStore/S3BlobStore
-+ 内嵌或独立索引 worker）、Session Status 统一状态查询端点（v2.0.4dev+）、
-Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
+AgentInvite 邀请已有 agent 入队）、服务化知识库（KnowledgeBaseManager + LocalBlobStore/S3BlobStore
++ 内嵌或独立索引 worker）、Session Status 统一状态查询端点（v2.0.4+）、
+Agent 中断机制（UserInterruptEvent，v2.0.4+）、跨用户资源共享（ResourceAccessPolicy 抽象，
+group/org 场景）、RAG 新增 WordParser / ExcelParser / MongoDBStore、
+Workspace 新增 K8sWorkspace / OpenSandboxWorkspace、Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
 
@@ -122,6 +127,7 @@ asyncio.run(main())
 | RAG 知识库 (KnowledgeBase / RAGMiddleware) | [references/rag.md](references/rag.md) |
 | 中间件（含 TTS / Tracing / Mem0 / ReMe / AgenticMemory）和工作区 | [references/middleware-workspace.md](references/middleware-workspace.md) |
 | 服务化、RAG 服务层与子智能体模板 (SubAgentTemplate) | [references/middleware-workspace.md](references/middleware-workspace.md) |
+| Workspace 全部后端（含 K8s/OpenSandbox）+ 跨用户资源共享 | [references/middleware-workspace.md](references/middleware-workspace.md) |
 
 ## Credential 体系
 
@@ -338,10 +344,14 @@ state.middle_context # dict[str, Any] — 中间件跨 reply 存取数据
 ## Workspace（工作区）
 
 ```python
-from agentscope.workspace import LocalWorkspace, DockerWorkspace, E2BWorkspace
+from agentscope.workspace import (
+    LocalWorkspace, DockerWorkspace, E2BWorkspace,
+    K8sWorkspace, OpenSandboxWorkspace,           # v2.0.4+
+)
 
-# 三种 workspace 都支持内置工具（Bash/Read/Write/Edit/Grep/Glob），只是执行后端不同：
-# LocalWorkspace -> 本地；DockerWorkspace -> 容器；E2BWorkspace -> 云沙箱
+# 五种 workspace 都支持内置工具（Bash/Read/Write/Edit/Grep/Glob），只是执行后端不同：
+# LocalWorkspace -> 本地；DockerWorkspace -> 容器；E2BWorkspace -> 云沙箱；
+# K8sWorkspace -> K8s Pod + PVC 持久化（v2.0.4+）；OpenSandboxWorkspace -> OpenSandbox SDK（v2.0.4+）
 
 # 本地工作区
 workspace = LocalWorkspace(
