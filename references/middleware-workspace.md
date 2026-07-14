@@ -430,15 +430,17 @@ workspace = E2BWorkspace(...)
 
 ### Backend 抽象（v2.0.3+）
 
-builtin 工具（Bash/Read/Write 等）的执行被抽象到 `BackendBase` 体系，docker / e2b / local 三种后端各自实现 `exec_shell` / `read_file` / `write_file` 原语。`DockerBackend` / `E2BBackend` 已对外导出，供自定义工具/工作区的高级开发者直接构造：
+builtin 工具（Bash/Read/Write 等）的执行被抽象到 `BackendBase` 体系，local / docker / e2b / k8s / opensandbox / daytona 六种后端各自实现 `exec_shell` / `read_file` / `write_file` 原语。各 `*Backend` 均已对外导出，供自定义工具/工作区的高级开发者直接构造：
 
 ```python
-from agentscope.workspace import DockerBackend, E2BBackend
+from agentscope.workspace import (
+    DockerBackend, E2BBackend, K8sBackend, OpenSandboxBackend, DaytonaBackend,
+)
 from agentscope.tool import BackendBase, LocalBackend, ExecResult
 ```
 
 > ℹ️ 普通用 `LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace` 的开发者无需手动构造 Backend——workspace 内部会自行创建。
-> `K8sBackend` / `OpenSandboxBackend` 也已对外导出,`DockerWorkspace` 之外的两个沙箱后端同理。
+> `K8sBackend` / `OpenSandboxBackend` / `DaytonaBackend` 也已对外导出,对应的沙箱 workspace 同理。
 
 ### K8sWorkspace — K8s Pod 工作区（v2.0.4+）
 
@@ -508,15 +510,55 @@ workspace = OpenSandboxWorkspace(
   频繁启停的场景。
 - bootstrap 阶段在 sandbox 内安装 `ripgrep`/`uv`/`curl` 并建 venv。
 
+### DaytonaWorkspace — Daytona 沙箱工作区（v2.0.4+）
+
+基于 [Daytona](https://www.daytona.io/) SDK,适合用托管或自托管的 Daytona 沙箱服务。与其他
+沙箱 workspace 不同,Daytona 的 `workdir` / `_gateway_home` **不在构造时写死**,而是在
+`initialize()` 阶段从 SDK 的 `get_work_dir()` / `get_user_home_dir()` 派生(因为 snapshot 可能
+以非 root 用户运行)。文件 I/O 走 `sandbox.fs.upload_file` / `download_file`,exec 走
+`sandbox.process.exec`:
+
+```python
+from agentscope.workspace import DaytonaWorkspace
+
+workspace = DaytonaWorkspace(
+    workspace_id=None,                # None 自动生成;给定则按 label 复用已有沙箱
+    api_key="",                       # "" 让 Daytona SDK 从环境读取凭据
+    api_url="",                       # 自托管部署 URL;"" 用 SDK 默认
+    target="",                        # Daytona 区域/target;"" 用 SDK 默认
+    timeout_seconds=DEFAULT_TIMEOUT,  # create/start/recover/stop 超时
+    gateway_port=DEFAULT_GATEWAY_PORT,
+    env=None,                         # 沙箱环境变量
+    sandbox_metadata=None,            # 额外 label,与 workspace-id label 合并
+    extra_pip=None,                   # bootstrap 时额外 pip install 的包
+    os_user=None,                     # None 让 Daytona/snapshot 决定运行用户
+    instructions=_DEFAULT_INSTRUCTIONS,
+    default_mcps=None, skill_paths=None,
+)
+# 必须先 initialize(或用 async with)
+```
+
+关键点:
+- **唯一运行时派生路径的 workspace**:`workdir`、`_gateway_home`(= `{user_home}/.agentscope`)、
+  uv 二进制(`{user_home}/.local/bin/uv`)都在 `_provision_backend` 时从 SDK 读取,而非类常量。
+- **沙箱状态机最复杂**:`_ensure_existing_sandbox_ready()` 处理 `started/stopped/paused/
+  pausing/stopping/starting/resuming/error(可恢复)` 共 8 种状态,按 label
+  `agentscope.workspace.id` 查找并重连。
+- `close()` 调用 `sandbox.stop(force=False)`——**非 pause(E2B/OpenSandbox 用 pause)、非 delete
+  (Docker/K8s 删容器/Pod)**,文件系统保留以便下次 label 重连。
+- exec 命令被 `shlex.quote` 折叠成单行并追加 `2>&1`(Daytona SDK 无独立 stderr 字段)。
+- 依赖 `daytona` 包,延迟导入,未安装不影响其他 workspace。
+- 每个 workspace 拥有独立的 `AsyncDaytona` 客户端。
+
 ### WorkspaceManager（服务化）
 
 服务化部署（`create_app`）通过 `WorkspaceManager` 按用户/agent/session 隔离策略派发 workspace
-实例,并带 TTL 缓存 + 后台 sweeper 自动清理空闲 workspace。五种实现对应五种后端:
+实例,并带 TTL 缓存 + 后台 sweeper 自动清理空闲 workspace。六种实现对应六种后端:
 
 ```python
 from agentscope.app.workspace_manager import (
     LocalWorkspaceManager, DockerWorkspaceManager, E2BWorkspaceManager,
-    K8sWorkspaceManager, OpenSandboxWorkspaceManager,   # v2.0.4+
+    K8sWorkspaceManager, OpenSandboxWorkspaceManager, DaytonaWorkspaceManager,  # 后三者 v2.0.4+
     IsolationPolicy,  # PER_AGENT / PER_USER / PER_SESSION
 )
 
@@ -538,10 +580,27 @@ app = create_app(..., workspace_manager=ws_manager)
   `close(workspace_id)` / `close_all()`,调用方无需关心后端类型。
 - `__aenter__` 启动后台 sweeper,`__aexit__` 停止 sweeper 并 `close_all()`。
 
-### 三种 Workspace 都支持内置工具（v2.0.3+）
+Daytona 部署示例(托管或自托管,`api_url` 留空用 SDK 默认):
 
-`LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace` / `K8sWorkspace` / `OpenSandboxWorkspace`
-均实现了 `list_tools()`，返回六个内置工具（Bash/Read/Write/Edit/Grep/Glob）。区别仅在于**执行后端**：
+```python
+from agentscope.app.workspace_manager import DaytonaWorkspaceManager
+
+ws_manager = DaytonaWorkspaceManager(
+    isolation=IsolationPolicy.PER_AGENT,
+    api_key="",                        # "" 让 Daytona SDK 从环境读取
+    api_url="",                        # 自托管 URL;"" 用 SDK 默认
+    target="",
+    ttl=3600.0,
+    sweep_interval=300.0,
+    default_mcps=None, skill_paths=None,
+)
+app = create_app(..., workspace_manager=ws_manager)
+```
+
+### 六种 Workspace 都支持内置工具（v2.0.3+）
+
+`LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace` / `K8sWorkspace` / `OpenSandboxWorkspace` /
+`DaytonaWorkspace` 均实现了 `list_tools()`，返回六个内置工具（Bash/Read/Write/Edit/Grep/Glob）。区别仅在于**执行后端**：
 
 | Workspace | 内置工具执行位置 |
 |---|---|
@@ -550,6 +609,7 @@ app = create_app(..., workspace_manager=ws_manager)
 | `E2BWorkspace` | E2B 云沙箱内（`E2BBackend`，路径 `/home/user/workspace`） |
 | `K8sWorkspace`（v2.0.4+） | K8s Pod 内（`K8sBackend`，tar-over-exec 文件 I/O） |
 | `OpenSandboxWorkspace`（v2.0.4+） | OpenSandbox 内（`OpenSandboxBackend`，SDK 原生 files API） |
+| `DaytonaWorkspace`（v2.0.4+） | Daytona 沙箱内（`DaytonaBackend`，`sandbox.fs` + `sandbox.process.exec`） |
 
 ```python
 # E2B/Docker workspace 必须先 initialize（或用 async with），才能取内置工具
