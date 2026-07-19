@@ -4,12 +4,12 @@
 
 > Claude Code Skill：AgentScope 2.0 多智能体框架开发指南
 
-![version](https://img.shields.io/badge/AgentScope-v2.0.4-blue)
+![version](https://img.shields.io/badge/AgentScope-v2.0.4.post1-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
 ## 简介
 
-这是一个 [Claude Code](https://claude.ai/code) 的 Skill 插件，为 [AgentScope 2.0](https://github.com/agentscope-ai/agentscope)（`agentscope-ai`）提供全面的开发参考。安装后，Claude Code 在处理 AgentScope 相关任务时会自动加载此技能，获得 v2 API 的准确知识。文档持续跟随上游源码同步，当前对应 **v2.0.4**。
+这是一个 [Claude Code](https://claude.ai/code) 的 Skill 插件，为 [AgentScope 2.0](https://github.com/agentscope-ai/agentscope)（`agentscope-ai`）提供全面的开发参考。安装后，Claude Code 在处理 AgentScope 相关任务时会自动加载此技能，获得 v2 API 的准确知识。文档持续跟随上游源码同步，当前对应 **v2.0.4.post1**。
 
 ⚠️ **注意**：AgentScope 2.0 与旧版 `modelscope/agentscope`（v1.x）的 API 完全不同，不兼容。
 
@@ -24,7 +24,7 @@
 - **MCPClient**：StdIO / 有状态 HTTP / 无状态 HTTP 连接
 - **AgentState**：上下文、摘要、会话、权限、任务管理
 - **事件系统**：`REPLY_START` → `TEXT_BLOCK_DELTA` → `TOOL_CALL_*` → `REPLY_END`，含 `DATA_BLOCK_*` 音频流、Agent 中断（`UserInterruptEvent`，v2.0.4+）
-- **Permission / ToolGroup / Skill**：权限控制、工具组、技能系统
+- **Permission / ToolGroup / Skill**：权限控制（五种 `PermissionMode`，v2.0.4.post1 起统一只读快路径，`DONT_ASK` 升级为 `ACCEPT_EDITS` 的无人值守版）、工具组、技能系统
 - **Middleware**：拦截 reply/reasoning/acting/model_call，含内置 `TTSMiddleware` / `ReplyBudgetControlMiddleware` / `TracingMiddleware`（OpenTelemetry 追踪）/ `Mem0Middleware`（mem0 跨会话长期记忆，v2.0.3+）/ `ReMeMiddleware`（内嵌 ReMe 长期记忆，v2.0.4+）/ `AgenticMemoryMiddleware`（文件系统长期记忆，v2.0.4+）/ `RAGMiddleware`（检索增强）
 - **Workspace**：`LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace` / `K8sWorkspace` / `OpenSandboxWorkspace` / `DaytonaWorkspace`（后三者 v2.0.4+），均支持内置工具（Bash/Read/Write/Edit/Grep/Glob）在容器/云沙箱/K8s Pod 执行，Backend 抽象（`LocalBackend` / `DockerBackend` / `E2BBackend` / `K8sBackend` / `OpenSandboxBackend` / `DaytonaBackend`）
 - **服务化**：`create_app`（REST + SSE）、`SubAgentTemplate` 子智能体模板（含团队 Leader HITL 事件投影 + `AgentInvite` 邀请已有 agent 入队，v2.0.4+）、`MessageBus` 消息总线（`RedisMessageBus` / `InMemoryMessageBus` 单节点轻量选项，v2.0.3+）、Session Status 统一状态查询端点（v2.0.4+）、跨用户资源共享（`ResourceAccessPolicy` 抽象，group/org 场景，v2.0.4+）、服务化知识库（`KnowledgeBaseManager` + `LocalBlobStore`/`S3BlobStore` + 内嵌或独立索引 worker）

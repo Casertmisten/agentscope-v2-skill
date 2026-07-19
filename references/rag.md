@@ -168,6 +168,9 @@ store = MilvusLiteStore(
 
 > 两种后端都需用 `async with` 进出:`__aenter__` 打开连接,`__aexit__` 关闭。collection 在首次操作时
 > 惰性创建(`ensure_collection` 幂等且记忆化),无需手动建。
+>
+> ℹ️ v2.0.4.post1 起 `MilvusLiteStore` 要求 `milvus-lite>=3.1.0`（COSINE 度量下
+> `distance` 字段语义变化，新版本 `distance` 即余弦相似度，框架不再做 `1.0 - distance` 转换）。
 
 **如何选择**:
 - `QdrantStore(location=":memory:")` —— 纯内存,最快,适合单元测试。

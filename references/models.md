@@ -121,6 +121,9 @@ model = OpenAIChatModel(
 - `extra_body` — 请求体级扩展字段，适配 DeepSeek、通义、vLLM 等兼容服务商的私有参数；
   不传时不会在请求里出现 `extra_body` 键。
 
+> ℹ️ `OpenAIChatModel.Parameters.max_tokens` 字段名不变（v2.0.4.post1+），但发送到 OpenAI API 时
+> 会被映射为请求体里的 `max_completion_tokens` 键（对齐 OpenAI 新版 Chat Completions API）。
+
 ### Omni 模型的音频输出（v2.0.2+）
 
 > ⚠️ 实验性 / 积极开发中：Omni 音频输出属于官方 Voice Agent 路线（roadmap）的多模态阶段，

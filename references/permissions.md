@@ -24,11 +24,16 @@ from agentscope.permission import (
 
 | 模式 | 行为 | 适用场景 |
 |---|---|---|
-| `DEFAULT` | 每个操作都需确认，除非有 allow 规则匹配 | 默认模式，最安全 |
-| `ACCEPT_EDITS` | 自动允许工作目录内的文件读写和文件系统命令 | 快速迭代开发 |
-| `EXPLORE` | 只读模式：允许只读工具和命令，拒绝修改操作 | 探索代码库 |
-| `BYPASS` | 跳过所有安全检查，仅用户 deny/ask 规则生效 | 沙箱环境 |
-| `DONT_ASK` | 将所有 ASK（包括安全 ASK）转为 DENY | 无人值守执行 |
+| `DEFAULT` | 默认需确认，但**只读调用自动放行**（v2.0.4.post1+，`tool.check_read_only()` 返回 True 的工具/命令，如 `ls`/`git status`/Read/Glob/Grep）；其余按 deny→ask→allow 规则匹配，未命中则 ASK | 默认模式，最安全 |
+| `ACCEPT_EDITS` | 自动放行工作目录内的文件读写、文件系统命令（mkdir/rm/mv/cp 等，要求所有目标路径都在工作目录内），其余按规则 | 用户在场，快速迭代开发 |
+| `EXPLORE` | 只读模式：允许只读工具和只读 bash 命令，拒绝一切修改；**用户配置的 DENY/ASK 规则优先于只读自动放行** | 探索代码库 |
+| `BYPASS` | 跳过所有检查（**包括安全 ASK**，如 `rm -rf /`、写 `~/.bashrc`），仅用户 deny/ask 规则和工具自身 DENY 生效 | 完全可信的沙箱环境 |
+| `DONT_ASK` | **ACCEPT_EDITS 的无人值守对应版**（v2.0.4.post1+ 行为升级）：只读调用 + 工作目录内编辑自动放行，其余本应弹窗的 ASK（含安全 ASK）一律转 DENY；**保证永不返回 ASK** | 定时任务、后台执行等用户不在场的场景 |
+
+> ℹ️ **v2.0.4.post1 权限行为变化**：
+> - 五种模式统一走同一个 `_check_read_only_fast_path`，**DEFAULT 和 DONT_ASK 现在也自动放行只读调用**（之前只有 ACCEPT_EDITS/EXPLORE 有只读快路径）。
+> - **DONT_ASK 语义升级**：从「全转 DENY」变成「ACCEPT_EDITS 的无人值守版」——只读 + 工作目录内编辑会自动放行，仅其余需要人工确认的操作转 DENY。`Bash` 工具的工作目录内文件系统命令自动放行逻辑也已同时覆盖 ACCEPT_EDITS 和 DONT_ASK。
+> - 对比：BYPASS 适合「完全信任、要最高自由度」的沙箱；DONT_ASK 适合「无人值守但仍要安全护栏」的定时任务。
 
 ```python
 from agentscope.permission import PermissionMode, PermissionContext
@@ -129,9 +134,9 @@ class MyTool(ToolBase):
 
 内置工具（Bash、Read、Write、Edit、Glob、Grep）都有完善的权限检查：
 
-- **Bash** — 命令模式匹配，自动允许只读命令（ls/git status）
-- **Read/Write/Edit** — 文件路径模式匹配，敏感文件保护，ACCEPT_EDITS 模式下自动允许工作目录操作
-- **Glob/Grep** — 搜索路径匹配，EXPLORE 模式下自动允许
+- **Bash** — 命令模式匹配，只读命令（`ls`/`git status` 等）在各模式自动放行；工作目录内文件系统命令（`mkdir`/`rm`/`mv`/`cp` 等，要求所有目标路径都在工作目录内）在 `ACCEPT_EDITS` 和 `DONT_ASK` 模式自动放行
+- **Read/Write/Edit** — 文件路径模式匹配，敏感文件保护，`ACCEPT_EDITS`/`DONT_ASK` 模式下自动允许工作目录操作
+- **Glob/Grep** — 搜索路径匹配，只读在各模式自动放行，`EXPLORE` 模式下更是全部放行
 
 ### 敏感文件保护
 

@@ -4,12 +4,12 @@
 
 > Claude Code Skill: Development guide for the AgentScope 2.0 multi-agent framework
 
-![version](https://img.shields.io/badge/AgentScope-v2.0.4-blue)
+![version](https://img.shields.io/badge/AgentScope-v2.0.4.post1-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
 ## Overview
 
-This is a [Claude Code](https://claude.ai/code) Skill plugin that provides comprehensive development reference for [AgentScope 2.0](https://github.com/agentscope-ai/agentscope) (`agentscope-ai`). Once installed, Claude Code automatically activates this skill when handling AgentScope-related tasks, ensuring accurate v2 API knowledge. Docs are continuously synced with upstream source, currently aligned with **v2.0.4**.
+This is a [Claude Code](https://claude.ai/code) Skill plugin that provides comprehensive development reference for [AgentScope 2.0](https://github.com/agentscope-ai/agentscope) (`agentscope-ai`). Once installed, Claude Code automatically activates this skill when handling AgentScope-related tasks, ensuring accurate v2 API knowledge. Docs are continuously synced with upstream source, currently aligned with **v2.0.4.post1**.
 
 ⚠️ **Note**: AgentScope 2.0 has a completely different, incompatible API from the legacy `modelscope/agentscope` (v1.x).
 
@@ -24,7 +24,7 @@ This is a [Claude Code](https://claude.ai/code) Skill plugin that provides compr
 - **MCPClient**: StdIO / stateful HTTP / stateless HTTP connections
 - **AgentState**: Context, summary, session, permission, task management
 - **Event System**: `REPLY_START` → `TEXT_BLOCK_DELTA` → `TOOL_CALL_*` → `REPLY_END`, incl. `DATA_BLOCK_*` audio streams and agent interruption (`UserInterruptEvent`, v2.0.4+)
-- **Permission / ToolGroup / Skill**: Permission control, tool groups, skill system
+- **Permission / ToolGroup / Skill**: Permission control (five `PermissionMode`s; since v2.0.4.post1 a unified read-only fast path, and `DONT_ASK` upgraded to the unattended counterpart of `ACCEPT_EDITS`), tool groups, skill system
 - **Middleware**: Intercept reply/reasoning/acting/model_call, incl. built-in `TTSMiddleware` / `ReplyBudgetControlMiddleware` / `TracingMiddleware` (OpenTelemetry tracing) / `Mem0Middleware` (mem0 cross-session long-term memory, v2.0.3+) / `ReMeMiddleware` (embedded ReMe long-term memory, v2.0.4+) / `AgenticMemoryMiddleware` (filesystem long-term memory, v2.0.4+) / `RAGMiddleware` (retrieval augmentation)
 - **Workspace**: `LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace` / `K8sWorkspace` / `OpenSandboxWorkspace` / `DaytonaWorkspace` (latter three v2.0.4+), all support built-in tools (Bash/Read/Write/Edit/Grep/Glob) running in containers/cloud sandboxes/K8s Pods; Backend abstraction (`LocalBackend` / `DockerBackend` / `E2BBackend` / `K8sBackend` / `OpenSandboxBackend` / `DaytonaBackend`)
 - **App**: `create_app` (REST + SSE), `SubAgentTemplate` sub-agent templates (incl. team leader HITL event projection + `AgentInvite` to borrow existing agents, v2.0.4+), `MessageBus` (`RedisMessageBus` / `InMemoryMessageBus` single-node lightweight option, v2.0.3+), Session Status unified status endpoint (v2.0.4+), cross-user resource sharing (`ResourceAccessPolicy` abstraction, group/org scenarios, v2.0.4+), served knowledge base (`KnowledgeBaseManager` + `LocalBlobStore`/`S3BlobStore` + embedded or standalone index worker)
