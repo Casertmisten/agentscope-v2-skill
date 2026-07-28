@@ -38,11 +38,27 @@ async def check_read_only(tool_input) -> bool   # EXPLORE 模式下用于判断�
 ### 内置工具
 
 ```python
-from agentscope.tool import Bash, Read, Write, Edit, Glob, Grep, ResetTools
+from agentscope.tool import Bash, Read, Write, Edit, Glob, Grep, ResetTools, PowerShell
 
 # 这些工具都有完善的权限检查和文件缓存
 toolkit = Toolkit(tools=[Bash(), Read(), Write(), Edit()])
 ```
+
+### PowerShell 工具（v2.0.5+，Windows）
+
+`PowerShell` 是与 `Bash` 平级的 `ToolBase` 子类，用于 Windows 环境。探针优先 `pwsh` 后
+`powershell.exe`，用 `-EncodedCommand`（UTF-16-LE base64）规避引号转义问题，会话状态不跨命令保留。
+`check_permissions` 恒返回 `ASK`（保守策略，不建议 allow 规则）。
+
+```python
+from agentscope.tool import PowerShell
+
+toolkit = Toolkit(tools=[PowerShell(), Read(), Write(), Edit()])
+```
+
+> ℹ️ 通常无需手动构造 `PowerShell`——`LocalWorkspace.list_tools()` 在 `os.name == "nt"` 时
+> 自动把 shell 工具替换为 `PowerShell`（其余 `Edit/Glob/Grep/Read/Write` 不变），非 Windows 仍用 `Bash`。
+> 其他沙箱后端（Docker/E2B 等）未做此集成。
 
 ### 任务管理工具
 

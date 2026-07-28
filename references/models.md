@@ -102,6 +102,12 @@ model = credential.get_chat_model_class()(
 )
 ```
 
+> ℹ️ 模型清单由各 provider 目录下的 YAML 文件动态加载（`model/_<provider>/_models/*.yaml`），
+> 没有静态 Python 常量。新增模型通常只加 YAML，不改代码。例如 v2.0.5 新增了
+> `kimi-k3`（Moonshot，1048576 上下文，多模态）、DashScope 的 `qwen3.7-plus`/`deepseek-v4-pro`/`glm-5.2`，
+> 均可通过 `credential.list_models()` 查到。`kimi-k3` 在 `MoonshotChatModel` 中额外支持
+> `reasoning_effort: "low"|"high"|"max"` 参数。
+
 ### OpenAI Chat 模型专属参数
 
 `OpenAIChatModel` 额外支持透传到 OpenAI 兼容 API 的字段（v2.0.3+）：
@@ -298,6 +304,7 @@ from agentscope.tts import (
     DashScopeTTSModel,                 # 普通非实时
     DashScopeRealtimeTTSModel,         # Qwen3 实时流式输入
     DashScopeCosyVoiceTTSModel,        # CosyVoice 普通/实时（v2.0.4+）
+    GeminiTTSModel,                    # Gemini TTS（gemini-2.5-flash/pro-preview-tts，v2.0.5+）
 )
 ```
 
@@ -362,9 +369,32 @@ async for resp in await tts.synthesize(text="你好"):
     ...
 ```
 
+### GeminiTTSModel（v2.0.5+）
+
+基于 Google Gemini TTS API 的非实时模型（`realtime=False`），复用已有的 `GeminiCredential`
+（未新增独立 credential；`GeminiCredential.get_tts_model_classes()` 现返回 `[GeminiTTSModel]`）。
+依赖 `model-gemini` extra（`google-genai`）。
+
+```python
+from agentscope.credential import GeminiCredential
+from agentscope.tts import GeminiTTSModel
+
+credential = GeminiCredential(api_key="xxx")
+tts = GeminiTTSModel(
+    credential=credential,
+    model="gemini-2.5-flash-preview-tts",   # 或 gemini-2.5-pro-preview-tts
+    parameters=GeminiTTSModel.Parameters(
+        voice="Kore",         # Gemini 预置音色名
+    ),
+    stream=False,
+)
+resp = await tts.synthesize(text="Hello")
+```
+
 > 各提供商的 TTS 能力：OpenAI 提供 `OpenAITTSModel`（非实时），DashScope 提供
 > `DashScopeTTSModel`（普通）/`DashScopeRealtimeTTSModel`（Qwen3 实时）/`DashScopeCosyVoiceTTSModel`
-> （CosyVoice 普通+实时）；其余提供商（Anthropic/Gemini/Ollama 等）当前不提供 TTS，`get_tts_model_classes()` 返回空列表。
+> （CosyVoice 普通+实时），Gemini 提供 `GeminiTTSModel`（v2.0.5+，非实时）；
+> 其余提供商（Anthropic/Ollama 等）当前不提供 TTS，`get_tts_model_classes()` 返回空列表。
 
 TTS 的核心 API：
 - `synthesize(text)` — 阻塞直到整句合成完成

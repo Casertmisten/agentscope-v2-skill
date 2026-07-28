@@ -5,39 +5,47 @@ description: |
   多智能体开发、基于 AgentScope 构建 agent/智能体应用时使用此 skill。即使用户只是说"写个 agent"、
   "多智能体"、"帮我用 agentscope"也应触发。注意：这是 agentscope-ai/agentscope v2 版本，
   与旧版 modelscope/agentscope 的 API 完全不同（无 memory/pipeline/formatter 模块）。
-涵盖：Agent 创建、Credential/Model 配置、Toolkit/ToolBase 工具注册（含 ToolMiddlewareBase 工具级中间件）、
+涵盖：Agent 创建、Credential/Model 配置、Toolkit/ToolBase 工具注册（含 ToolMiddlewareBase 工具级中间件、Windows PowerShell 工具）、
 MCPClient 集成、AgentState 状态管理、Event 事件系统、Permission 权限、ToolGroup、Skill 技能系统、
 Middleware 中间件（含 TTSMiddleware / ReplyBudgetControlMiddleware / TracingMiddleware / Mem0Middleware 跨会话长期记忆 /
-ReMeMiddleware 内嵌 ReMe 长期记忆 / AgenticMemoryMiddleware 文件系统长期记忆 / RAGMiddleware 检索增强）、Workspace 工作区（六种 Workspace 均支持
-内置工具，Backend 抽象：LocalBackend / DockerBackend / E2BBackend / K8sBackend / OpenSandboxBackend / DaytonaBackend）、Embedding/TTS 多模态模型
+ReMeMiddleware 内嵌 ReMe 长期记忆 / AgenticMemoryMiddleware 文件系统长期记忆 / RAGMiddleware 检索增强，及 on_check_permission
+权限检查洋葱 hook）、Agent 结构化输出（structured_schema Pydantic 模型）、运行时状态注入（时间/任务/上下文压缩感知）、
+Workspace 工作区（八种 Workspace 均支持内置工具，Backend 抽象：LocalBackend / DockerBackend / E2BBackend /
+K8sBackend / OpenSandboxBackend / DaytonaBackend / AppleContainerBackend / BubblewrapBackend）、Embedding/TTS 多模态模型
 （Embedding v2.0.3 重构为泛型基类，dimensions 必填 + FileEmbeddingCache 文件缓存；TTS 含 OpenAITTSModel /
-DashScope CosyVoice 等）、RAG 知识库（agentscope.rag：
-KnowledgeBase / QdrantStore / MilvusLiteStore / Parser-Chunker 管线 / RAGMiddleware static+agentic 双模式）、
+DashScope CosyVoice / GeminiTTSModel 等）、RAG 知识库（agentscope.rag：
+KnowledgeBase / QdrantStore / MilvusLiteStore / MongoDBStore / ElasticsearchStore / Parser-Chunker 管线 / RAGMiddleware static+agentic 双模式）、
 SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影 + AgentInvite 邀请已有 agent）、App 服务化（含 KnowledgeBaseManager /
 BlobStore / 内嵌或独立索引 worker / MessageBus 消息总线：
-RedisMessageBus / InMemoryMessageBus / Session Status 端点）、Agent 中断（UserInterruptEvent）、
-跨用户资源共享（ResourceAccessPolicy 抽象）、set_id_factory 全局 ID 工厂等。
+RedisMessageBus / InMemoryMessageBus / Session Status 端点 / AsyncSQLAlchemyStorage 持久化）、Agent 中断（UserInterruptEvent）、
+回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR）、跨用户资源共享（ResourceAccessPolicy 抽象）、set_id_factory 全局 ID 工厂等。
 ---
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
 
-AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.4.post1`。
+AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.5`。
 
-**核心特性**：事件驱动架构、权限系统、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
-REST+SSE 智能体服务（MessageBus 消息总线，含 InMemoryMessageBus 单节点轻量选项）、六种 Workspace 均支持
-内置工具在容器/云沙箱执行（LocalBackend / DockerBackend / E2BBackend / K8sBackend / OpenSandboxBackend / DaytonaBackend）、Middleware 中间件（含
+**核心特性**：事件驱动架构、权限系统（含 on_check_permission 中间件 hook、批量确认豁免、
+DEFAULT/DONT_ASK 只读快路径）、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
+REST+SSE 智能体服务（MessageBus 消息总线，含 InMemoryMessageBus 单节点轻量选项；
+AsyncSQLAlchemyStorage 多数据库持久化存储）、八种 Workspace 均支持
+内置工具在容器/云沙箱执行（LocalBackend / DockerBackend / E2BBackend / K8sBackend / OpenSandboxBackend /
+DaytonaBackend / AppleContainerBackend / BubblewrapBackend）、Middleware 中间件（含
 TTSMiddleware / ReplyBudgetControlMiddleware / TracingMiddleware OpenTelemetry 追踪 /
 Mem0Middleware 跨会话长期记忆 / ReMeMiddleware 内嵌 ReMe 长期记忆 / AgenticMemoryMiddleware
 文件系统长期记忆（v2.0.4+）/ RAGMiddleware 检索增强）、工具级洋葱中间件（ToolMiddlewareBase）、
 Embedding/TTS 多模态模型（Embedding v2.0.3 重构为泛型基类，dimensions 为必填契约参数 + 多模态路由 + FileEmbeddingCache 文件缓存；
-TTS 含 OpenAITTSModel / DashScopeTTSModel / DashScopeRealtimeTTSModel / DashScopeCosyVoiceTTSModel）、
-RAG 知识库（agentscope.rag：KnowledgeBase + QdrantStore + MilvusLiteStore（v2.0.4+）+ Parser/Chunker 索引管线 +
-RAGMiddleware static/agentic 双模式）、SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影 +
-AgentInvite 邀请已有 agent 入队）、服务化知识库（KnowledgeBaseManager + LocalBlobStore/S3BlobStore
-+ 内嵌或独立索引 worker）、Session Status 统一状态查询端点（v2.0.4+）、
-Agent 中断机制（UserInterruptEvent，v2.0.4+）、跨用户资源共享（ResourceAccessPolicy 抽象，
-group/org 场景）、RAG 新增 WordParser / ExcelParser / MongoDBStore、
-Workspace 新增 K8sWorkspace / OpenSandboxWorkspace / DaytonaWorkspace、Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
+TTS 含 OpenAITTSModel / DashScopeTTSModel / DashScopeRealtimeTTSModel / DashScopeCosyVoiceTTSModel / GeminiTTSModel）、
+RAG 知识库（agentscope.rag：KnowledgeBase + QdrantStore + MilvusLiteStore（v2.0.4+）+ MongoDBStore（v2.0.4+）
++ ElasticsearchStore（v2.0.5+）+ Parser/Chunker 索引管线 + RAGMiddleware static/agentic 双模式）、
+SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影 + AgentInvite 邀请已有 agent 入队）、
+服务化知识库（KnowledgeBaseManager + LocalBlobStore/S3BlobStore + 内嵌或独立索引 worker）、
+Session Status 统一状态查询端点（v2.0.4+）、Agent 中断机制（UserInterruptEvent，v2.0.4+）、
+回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR，v2.0.5+）、
+Agent 结构化输出（structured_schema，v2.0.5+）、运行时状态注入（InjectionConfig，v2.0.5+）、
+跨用户资源共享（ResourceAccessPolicy 抽象，group/org 场景）、
+Workspace 新增 AppleContainerWorkspace / BubblewrapWorkspace（v2.0.5+）、Windows PowerShell 工具（v2.0.5+）、
+Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
 
@@ -117,17 +125,17 @@ asyncio.run(main())
 | 需要做什么 | 参考文件 |
 |---|---|
 | 配置模型和认证 | [references/models.md](references/models.md) |
-| Embedding / TTS 多模态模型 (v2.0.2+) | [references/models.md](references/models.md) |
+| Embedding / TTS 多模态模型（含 GeminiTTSModel、CosyVoice、OpenAITTSModel） | [references/models.md](references/models.md) |
 | 创建消息和内容块 | [references/messages.md](references/messages.md) |
-| 注册工具 (ToolBase) | [references/tools.md](references/tools.md) |
+| 注册工具 (ToolBase，含 Windows PowerShell) | [references/tools.md](references/tools.md) |
 | 集成 MCP | [references/tools.md](references/tools.md) |
 | 管理状态 (AgentState) | [references/state.md](references/state.md) |
-| Agent 配置和事件 | [references/agent-events.md](references/agent-events.md) |
-| 权限和工具组 | [references/permissions.md](references/permissions.md) |
-| RAG 知识库 (KnowledgeBase / RAGMiddleware) | [references/rag.md](references/rag.md) |
-| 中间件（含 TTS / Tracing / Mem0 / ReMe / AgenticMemory）和工作区 | [references/middleware-workspace.md](references/middleware-workspace.md) |
+| Agent 配置和事件（含结构化输出 / 运行时状态注入 / 错误上报） | [references/agent-events.md](references/agent-events.md) |
+| 权限和工具组（含 on_check_permission hook） | [references/permissions.md](references/permissions.md) |
+| RAG 知识库（KnowledgeBase / ElasticsearchStore / RAGMiddleware） | [references/rag.md](references/rag.md) |
+| 中间件（含 TTS / Tracing / Mem0 / ReMe / AgenticMemory / on_check_permission）和工作区 | [references/middleware-workspace.md](references/middleware-workspace.md) |
 | 服务化、RAG 服务层与子智能体模板 (SubAgentTemplate) | [references/middleware-workspace.md](references/middleware-workspace.md) |
-| Workspace 全部后端（含 K8s/OpenSandbox/Daytona）+ 跨用户资源共享 | [references/middleware-workspace.md](references/middleware-workspace.md) |
+| Workspace 全部后端（含 AppleContainer / Bubblewrap）+ 跨用户资源共享 | [references/middleware-workspace.md](references/middleware-workspace.md) |
 
 ## Credential 体系
 
@@ -247,7 +255,7 @@ async for event in agent.reply_stream(user_msg):
         case "EXCEED_MAX_ITERS": ...      # 超过最大迭代次数
         case "REQUIRE_USER_CONFIRM": ...  # 需要用户确认
         case "REQUIRE_EXTERNAL_EXECUTION": ...  # 需要外部执行
-        case "REPLY_END": ...
+        case "REPLY_END": ...             # 结束（finished_reason 可能为 ERROR，含 error: ErrorInfo）
 ```
 
 ## 消息创建
@@ -347,12 +355,15 @@ state.middle_context # dict[str, Any] — 中间件跨 reply 存取数据
 from agentscope.workspace import (
     LocalWorkspace, DockerWorkspace, E2BWorkspace,
     K8sWorkspace, OpenSandboxWorkspace, DaytonaWorkspace,  # 后三者 v2.0.4+
+    AppleContainerWorkspace, BubblewrapWorkspace,          # 后两者 v2.0.5+
 )
 
-# 六种 workspace 都支持内置工具（Bash/Read/Write/Edit/Grep/Glob），只是执行后端不同：
+# 八种 workspace 都支持内置工具（Bash/Read/Write/Edit/Grep/Glob），只是执行后端不同：
 # LocalWorkspace -> 本地；DockerWorkspace -> 容器；E2BWorkspace -> 云沙箱；
 # K8sWorkspace -> K8s Pod + PVC 持久化（v2.0.4+）；OpenSandboxWorkspace -> OpenSandbox SDK（v2.0.4+）；
-# DaytonaWorkspace -> Daytona 沙箱（v2.0.4+，支持自托管）
+# DaytonaWorkspace -> Daytona 沙箱（v2.0.4+，支持自托管）；
+# AppleContainerWorkspace -> macOS 26+ Apple Container CLI（v2.0.5+，Apple Silicon 原生沙箱）；
+# BubblewrapWorkspace -> Linux bubblewrap（bwrap）无 daemon 沙箱（v2.0.5+）
 
 # 本地工作区
 workspace = LocalWorkspace(
@@ -371,6 +382,73 @@ async with workspace:
         offloader=workspace,  # 启用上下文卸载
     )
 ```
+
+## Agent 结构化输出（v2.0.5+）
+
+`reply` / `reply_stream` 新增 `structured_schema` 参数，传一个 **Pydantic 模型类**，
+Agent 会在 ReAct 循环中调用内置的 `GenerateStructuredOutput` 工具产出符合 schema 的结构化结果：
+
+```python
+from pydantic import BaseModel
+
+class WeatherReport(BaseModel):
+    city: str
+    temperature: float
+
+res = await agent.reply(
+    UserMsg("user", "杭州天气如何？"),
+    structured_schema=WeatherReport,
+)
+# res.structured_output == {"city": "Hangzhou", "temperature": 25.0}
+```
+
+- 不是 `Agent(...)` 构造参数，而是 `reply` / `reply_stream` 的参数。
+- 流式获取最终结构化消息需 `reply_stream(..., structured_schema=..., yield_final_msg=True)`。
+- `ReActConfig.structured_output_grace_iters`（默认 5）控制超过 `max_iters` 后留给结构化输出的额外迭代数。
+- 详情见 [references/agent-events.md](references/agent-events.md)。
+
+## 运行时状态注入（v2.0.5+）
+
+Agent 默认在每轮推理前把**当前墙钟时间、任务状态、上下文压缩临近预警**作为 `HintBlock` 注入
+`state.context`（不改 system prompt，避免破坏 prompt caching）。由 `InjectionConfig` 控制：
+
+```python
+from agentscope.agent import Agent, InjectionConfig
+
+agent = Agent(
+    name="Assistant",
+    system_prompt="...",
+    model=model,
+    injection_config=InjectionConfig(
+        inject_runtime_state=True,   # 默认开启
+        timezone="Asia/Shanghai",
+        time_interval=0.5,           # 距上次注入超过 0.5 小时再注入时间
+        context_buffer_ratio=0.2,    # 进入压缩阈值前 20% 区间时预警
+    ),
+)
+# 关闭：InjectionConfig(inject_runtime_state=False)
+```
+
+约束：`context_buffer_ratio` 必须 < `ContextConfig.trigger_ratio`，否则构造报错。
+
+## 回复错误上报（v2.0.5+）
+
+reply 出错时不再静默崩溃，而是把错误分类后写进 `Msg` 与 `ReplyEndEvent`：
+
+```python
+from agentscope.types import ReplyFinishedReason, ErrorType, ErrorInfo
+
+msg = await agent.reply(user_msg)
+if msg.finished_reason == ReplyFinishedReason.ERROR:
+    print(msg.error.type, msg.error.message)
+    # e.g. "rate_limit", "Rate limit or quota exceeded — try again later."
+```
+
+- `ReplyFinishedReason` 新增 `ERROR`（原 `COMPLETED/INTERRUPTED/EXCEED_MAX_ITERS`）。
+- `ErrorType` 按 HTTP 语义分类：`authentication(401)` / `permission(403)` / `rate_limit(429)` /
+  `invalid_request(400/422)` / `upstream(5xx)` / `connection` / `internal` / `unknown`。
+- `ErrorInfo.message` 是通用文案，不泄露原始异常/密钥。
+- 服务化（`create_app`）的 SSE 流也会合成 `finished_reason=ERROR` 的 `ReplyEndEvent`。
 
 ## 全局配置
 

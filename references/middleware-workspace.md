@@ -74,7 +74,7 @@ reme_memory = ReMeMiddleware(
 agentic = AgenticMemoryMiddleware(workdir="./workspace")
 ```
 
-中间件支持 6 个拦截点，每个都是可选的（只需实现需要的）：
+中间件支持 7 个拦截点，每个都是可选的（只需实现需要的）：
 
 ### 拦截点
 
@@ -82,6 +82,7 @@ agentic = AgenticMemoryMiddleware(workdir="./workspace")
 |---|---|---|
 | `on_reply` | 洋葱模型 | 拦截整个 reply 过程 |
 | `on_reasoning` | 洋葱模型 | 拦截推理/模型调用阶段 |
+| `on_check_permission`（v2.0.5+） | 洋葱模型 | 拦截单次工具调用的权限检查 |
 | `on_acting` | 洋葱模型 | 拦截单个工具执行 |
 | `on_model_call` | 洋葱模型 | 拦截原始模型 API 调用 |
 | `on_compress_context` | 洋葱模型 | 拦截上下文压缩 |
@@ -124,6 +125,9 @@ input_kwargs = {"inputs": msg_or_event}
 # on_reasoning
 input_kwargs = {"tool_choice": tool_choice}
 
+# on_check_permission（v2.0.5+）
+input_kwargs = {"tool_call": ToolCallBlock, "tool": ToolBase, "tool_input": dict}
+
 # on_acting
 input_kwargs = {"tool_call": ToolCallBlock(...)}
 
@@ -138,6 +142,29 @@ input_kwargs = {
 # on_compress_context
 input_kwargs = {"context_config": ContextConfig | None, "instructions": HintBlock | None}
 ```
+
+### on_check_permission — 权限检查洋葱 hook（v2.0.5+）
+
+介于 `on_reasoning` 与 `on_acting` 之间的切入点，包裹**单次工具调用的权限检查**。
+`input_kwargs` 含已校验的 `tool_call`（`ToolCallBlock`）、解析后的 `tool`（`ToolBase`）、
+schema 校验后的 `tool_input`（dict）。Agent 在调用链前对它们做了 `deepcopy`，中间件改副本
+不会污染后续真实调用。返回 `PermissionDecision`（ALLOW/DENY/ASK/PASSTHROUGH）。
+
+```python
+from agentscope.middleware import MiddlewareBase
+from agentscope.permission import PermissionDecision
+
+class AuditPermissionMiddleware(MiddlewareBase):
+    async def on_check_permission(self, agent, input_kwargs, next_handler):
+        tool = input_kwargs["tool"]
+        # 委派给内置权限引擎拿到默认决策
+        decision = await next_handler(**input_kwargs)
+        agent.logger.info(f"{tool.name} -> {decision.behavior.value}")
+        return decision   # 可在此替换/拦截决策
+```
+
+> 若不调 `next_handler`，则跳过该调用的内置权限解析——可用于自定义完全独立的权限策略。
+> 已被用户确认放行的调用（`tool_call.state == ALLOWED`）仍走完整中间件链，但内置引擎会短路为 ALLOW。
 
 ### TracingMiddleware — OpenTelemetry 追踪
 
@@ -430,17 +457,21 @@ workspace = E2BWorkspace(...)
 
 ### Backend 抽象（v2.0.3+）
 
-builtin 工具（Bash/Read/Write 等）的执行被抽象到 `BackendBase` 体系，local / docker / e2b / k8s / opensandbox / daytona 六种后端各自实现 `exec_shell` / `read_file` / `write_file` 原语。各 `*Backend` 均已对外导出，供自定义工具/工作区的高级开发者直接构造：
+builtin 工具（Bash/Read/Write 等）的执行被抽象到 `BackendBase` 体系，local / docker / e2b / k8s /
+opensandbox / daytona / applecontainer / bubblewrap 八种后端各自实现 `exec_shell` / `read_file` /
+`write_file` 原语。各 `*Backend` 均已对外导出，供自定义工具/工作区的高级开发者直接构造：
 
 ```python
 from agentscope.workspace import (
     DockerBackend, E2BBackend, K8sBackend, OpenSandboxBackend, DaytonaBackend,
+    AppleContainerBackend, BubblewrapBackend,  # 后两者 v2.0.5+
 )
 from agentscope.tool import BackendBase, LocalBackend, ExecResult
 ```
 
 > ℹ️ 普通用 `LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace` 的开发者无需手动构造 Backend——workspace 内部会自行创建。
-> `K8sBackend` / `OpenSandboxBackend` / `DaytonaBackend` 也已对外导出,对应的沙箱 workspace 同理。
+> `K8sBackend` / `OpenSandboxBackend` / `DaytonaBackend` / `AppleContainerBackend` / `BubblewrapBackend`
+> 也已对外导出，对应的沙箱 workspace 同理。
 
 ### K8sWorkspace — K8s Pod 工作区（v2.0.4+）
 
@@ -550,15 +581,79 @@ workspace = DaytonaWorkspace(
 - 依赖 `daytona` 包,延迟导入,未安装不影响其他 workspace。
 - 每个 workspace 拥有独立的 `AsyncDaytona` 客户端。
 
+### AppleContainerWorkspace — Apple Container 工作区（v2.0.5+）
+
+基于 macOS 26+（Apple Silicon）的 `container` CLI（Apple Container），提供 Apple 原生的轻量
+沙箱。架构上镜像 Docker/E2B，只是把 SDK 换成系统级 `container` 命令。**无 Python 包依赖**，
+也**没有对应的 pip extra**——只需系统装好 `container` CLI（macOS 26+ 自带，需先 `container system start`）。
+
+```python
+from agentscope.workspace import AppleContainerWorkspace
+
+workspace = AppleContainerWorkspace(
+    workspace_id=None,                 # None 自动生成；给定则按容器名 as_ws_<id> 复用
+    base_image="python:3.11-slim",     # 默认 python:3.11-slim
+    gateway_port=5600,                 # MCP gateway 端口
+    cpus=2,                            # CPU 核数
+    memory="2G",                       # 内存上限
+    env=None,                          # 容器环境变量
+    extra_pip=None,                    # bootstrap 时额外 pip install 的包
+    instructions=_DEFAULT_INSTRUCTIONS,
+    default_mcps=None, skill_paths=None,
+)
+# 必须先 initialize（或用 async with）
+```
+
+关键点：
+- `_provision_backend` 执行 `container run -d --name as_ws_<id> --cpus .. --memory .. <image> sleep infinity`，
+  并绑定 `AppleContainerBackend(container_id=..., workdir="/workspace")`。
+- 文件 I/O 走 `container exec` / `container cp`（临时文件进容器）；MCP gateway 机制与 Docker/E2B 一致。
+- `close()` 执行 `container stop` 后 `container rm -f`——**容器文件系统即持久层，停止即丢失**
+  （无 host workdir 概念，与 Docker volume / K8s PVC 的持久化语义不同）。
+
+### BubblewrapWorkspace — bubblewrap 沙箱工作区（v2.0.5+）
+
+基于 Linux [bubblewrap](https://github.com/containers/bubblewrap)（`bwrap`）的无 daemon 沙箱，
+适合在不依赖 Docker/容器运行时的 Linux 环境里做命名空间隔离。**无 Python 包依赖**，也没有对应
+pip extra——只需系统装好 `bwrap` 二进制（多数 Linux 发行版原生可用）。**仅 Linux**：
+`_provision_backend` 会校验 `sys.platform.startswith("linux")` 和 `shutil.which("bwrap")`。
+
+```python
+from agentscope.workspace import BubblewrapWorkspace
+
+workspace = BubblewrapWorkspace(
+    workspace_id=None,                 # None 自动生成
+    host_workdir=None,                 # None 创建临时目录并在 close 时删除；给定则用该宿主目录
+    host_cache_dir=None,               # None 按 blake2b(host_workdir) 派生私有缓存目录
+    gateway_port=None,                 # MCP gateway 端口；None 自动选取
+    share_net=True,                    # 必须为 True（MCP gateway 需跨多次 bwrap 调用经 loopback 互通）
+    env=None,                          # 沙箱环境变量
+    extra_pip=None,                    # bootstrap 时额外 pip install 的包
+    instructions=_DEFAULT_INSTRUCTIONS,
+    default_mcps=None, skill_paths=None,
+)
+# 必须先 initialize（或用 async with）
+```
+
+关键点：
+- `BubblewrapBackend.exec_shell` **每次调用都新起一个 `bwrap` 进程**：`bwrap --die-with-parent
+  --new-session --unshare-all --bind <host_workdir> /workspace --bind <tmp> /tmp --share-net ...`，
+  只读挂载 `/usr`/`/bin`/`/lib` 等及网络/证书配置文件，`--clearenv` 后注入受控环境。
+- `read_file`/`write_file` 用沙箱内 `sh -c` + `realpath` 限制只允许写 `/workspace` 和 `/tmp`，
+  并拒绝符号链接逃逸；`_validate_mount_sources` 每次执行前用 `(st_dev, st_ino)` 校验挂载源未被替换。
+- bootstrap 阶段在沙箱内装 `uv`、建 venv、下载并校验 `ripgrep` 14.1.0（SHA256）。
+- `share_net=False` 会直接抛 `ValueError`。
+
 ### WorkspaceManager（服务化）
 
 服务化部署（`create_app`）通过 `WorkspaceManager` 按用户/agent/session 隔离策略派发 workspace
-实例,并带 TTL 缓存 + 后台 sweeper 自动清理空闲 workspace。六种实现对应六种后端:
+实例,并带 TTL 缓存 + 后台 sweeper 自动清理空闲 workspace。八种实现对应八种后端:
 
 ```python
 from agentscope.app.workspace_manager import (
     LocalWorkspaceManager, DockerWorkspaceManager, E2BWorkspaceManager,
     K8sWorkspaceManager, OpenSandboxWorkspaceManager, DaytonaWorkspaceManager,  # 后三者 v2.0.4+
+    AppleContainerWorkspaceManager, BubblewrapWorkspaceManager,                # 后两者 v2.0.5+
     IsolationPolicy,  # PER_AGENT / PER_USER / PER_SESSION
 )
 
@@ -597,19 +692,22 @@ ws_manager = DaytonaWorkspaceManager(
 app = create_app(..., workspace_manager=ws_manager)
 ```
 
-### 六种 Workspace 都支持内置工具（v2.0.3+）
+### 八种 Workspace 都支持内置工具（v2.0.3+）
 
 `LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace` / `K8sWorkspace` / `OpenSandboxWorkspace` /
-`DaytonaWorkspace` 均实现了 `list_tools()`，返回六个内置工具（Bash/Read/Write/Edit/Grep/Glob）。区别仅在于**执行后端**：
+`DaytonaWorkspace` / `AppleContainerWorkspace` / `BubblewrapWorkspace` 均实现了 `list_tools()`，
+返回六个内置工具（Bash/Read/Write/Edit/Grep/Glob）。区别仅在于**执行后端**：
 
 | Workspace | 内置工具执行位置 |
 |---|---|
-| `LocalWorkspace` | 本地文件系统（`LocalBackend`） |
+| `LocalWorkspace` | 本地文件系统（`LocalBackend`）；Windows 上 shell 工具自动用 `PowerShell`（v2.0.5+），非 Windows 用 `Bash` |
 | `DockerWorkspace` | 容器内（`DockerBackend`） |
 | `E2BWorkspace` | E2B 云沙箱内（`E2BBackend`，路径 `/home/user/workspace`） |
 | `K8sWorkspace`（v2.0.4+） | K8s Pod 内（`K8sBackend`，tar-over-exec 文件 I/O） |
 | `OpenSandboxWorkspace`（v2.0.4+） | OpenSandbox 内（`OpenSandboxBackend`，SDK 原生 files API） |
 | `DaytonaWorkspace`（v2.0.4+） | Daytona 沙箱内（`DaytonaBackend`，`sandbox.fs` + `sandbox.process.exec`） |
+| `AppleContainerWorkspace`（v2.0.5+） | Apple Container 内（`AppleContainerBackend`，`container exec`/`container cp`） |
+| `BubblewrapWorkspace`（v2.0.5+） | bubblewrap 沙箱内（`BubblewrapBackend`，每次 `bwrap` 新起隔离进程） |
 
 ```python
 # E2B/Docker workspace 必须先 initialize（或用 async with），才能取内置工具
@@ -688,12 +786,12 @@ v2 提供 FastAPI 工厂函数，用于将 Agent 托管为 REST + SSE 服务。
 ```python
 from agentscope.app import create_app, SubAgentTemplate
 from agentscope.app.rag import CollectionPerKbManager, LocalBlobStore, S3BlobStore
-from agentscope.app.storage import RedisStorage
+from agentscope.app.storage import RedisStorage, AsyncSQLAlchemyStorage
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 
 app = create_app(
-    storage=RedisStorage(),               # 存储后端（必填）
+    storage=RedisStorage(),               # 存储后端（必填）；也可用 AsyncSQLAlchemyStorage（v2.0.5+）
     message_bus=RedisMessageBus(),         # 消息总线（必填）
     workspace_manager=LocalWorkspaceManager(basedir="./workspaces"),  # 工作区管理器（必填）
     knowledge_base_manager=None,           # 可选：启用知识库服务层
@@ -783,6 +881,36 @@ bus = InMemoryMessageBus()
 - `MessageBus` —— 上述两者的抽象基类，可自行子类化实现自定义后端。
 
 > ℹ️ MessageBus 属于服务化层基础设施，普通 agent 开发者无需直接使用——由 `create_app` 启动的 FastAPI 服务在内部持有并调用。
+
+### 存储后端（Storage）
+
+`create_app` 的 `storage` 参数决定服务化的持久化后端（credentials / agents / sessions / 会话消息 /
+schedules / teams / knowledge bases / knowledge documents 共 8 类记录）。两种实现：
+
+```python
+from agentscope.app.storage import RedisStorage, AsyncSQLAlchemyStorage
+
+# Redis（默认，生产多进程部署常用）
+storage = RedisStorage(...)
+
+# SQLAlchemy（v2.0.5+）—— 支持 SQLite / PostgreSQL / MySQL 等 SQLAlchemy async 方言
+storage = AsyncSQLAlchemyStorage(
+    url="sqlite+aiosqlite:///./agentscope.db",   # 或 postgresql+asyncpg://... / mysql+aiomysql://...
+    create_tables=True,   # True: __aenter__ 时 CREATE TABLE（开发/首次启动）
+    auto_migrate=False,   # True: 走 Alembic upgrade head（生产迁移）
+    engine=None,          # 可传入预构建的 AsyncEngine
+    engine_kwargs=None,   # 透传给 create_async_engine
+)
+```
+
+- `AsyncSQLAlchemyStorage` 依赖 `storage-sql` extra（`sqlalchemy[asyncio]>=2.0` + `alembic>=1.13`），
+  具体 async 驱动（`aiosqlite`/`asyncpg`/`aiomysql` 等）**不在 extra 内**，由用户自装。
+- 通过 `app.storage.__init__` 惰性导入（`__getattr__`），未装 sql extra 不会触发 SQLAlchemy 导入。
+- 表定义刻意只用跨方言子集（plain `JSON`、无 generated column、upsert 按方言分发），兼容主流数据库。
+- 附带 Alembic 迁移脚手架（`app/storage/_sql/_alembic/`），`auto_migrate=True` 时自动 `alembic upgrade head`。
+
+> ℹ️ `StorageBase` 是两者的抽象基类，可自行子类化。普通 agent 开发者无需直接操作 storage——
+> 由 `create_app` 启动的 FastAPI 服务在内部持有。
 
 ### 内置路由
 

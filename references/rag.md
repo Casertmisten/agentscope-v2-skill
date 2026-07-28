@@ -8,6 +8,7 @@ RAG 让 Agent 能基于外部知识库回答问题。模块组成:
 - **`QdrantStore`** —— 内置向量库后端(基于 Qdrant)
 - **`MilvusLiteStore`**（v2.0.4+）—— 嵌入式向量库后端(基于 Milvus Lite,无需独立服务)
 - **`MongoDBStore`**（v2.0.4+）—— MongoDB Atlas 向量库后端(基于 `$vectorSearch`)
+- **`ElasticsearchStore`**（v2.0.5+）—— Elasticsearch 向量库后端(基于 dense_vector + HNSW kNN)
 - **`VectorStoreBase`** —— 向量库抽象基类,可子类化扩展其它后端
 - **Parser / Chunker** —— 文档解析与切分管线(`bytes → Section[] → Chunk[]`)
   - 文本 `TextParser`、PDF `PDFParser`、PPT `PPTParser`、图像 `ImageParser`
@@ -20,15 +21,22 @@ RAG 让 Agent 能基于外部知识库回答问题。模块组成:
 # RAG 依赖(含 qdrant-client + python-docx + pandas 等)
 uv pip install "agentscope[rag]"
 
-# MilvusLiteStore 另需（pymilvus[milvus-lite]）
+# MilvusLiteStore 另需（pymilvus[milvus-lite]>=3.1.0）
 uv pip install "agentscope[milvuslite]"
 
 # MongoDBStore 另需（pymongo>=4.7）
 uv pip install "agentscope[mongodb]"
 
+# ElasticsearchStore 另需（elasticsearch[async]>=8.12）
+uv pip install "agentscope[elasticsearch]"
+
 # 若 RAGMiddleware 与 Mem0Middleware 混用,另装
 uv pip install "agentscope[mem0]"
 ```
+
+> ℹ️ v2.0.5 起 optional dependencies 重组，引入 `model-`/`storage-`/`workspace-`/`vdb-`/`memory-`
+> 前缀命名。上方旧名（`milvuslite`/`mongodb`/`elasticsearch`/`mem0`）仍作为 deprecated alias 可用，
+> 新代码推荐用 `vdb-milvus`/`vdb-mongodb`/`vdb-elasticsearch`/`memory-mem0`。
 
 ## 索引管线
 
@@ -177,6 +185,7 @@ store = MilvusLiteStore(
 - `QdrantStore(url=...)` —— 生产部署,需要独立 Qdrant 服务。
 - `MilvusLiteStore(uri="./x.db")` —— 嵌入式,无需服务,适合单机轻量场景。
 - `MongoDBStore(uri=..., database=...)` —— 已有 MongoDB Atlas/副本集时复用,过滤字段需在建索引前声明。
+- `ElasticsearchStore(hosts=...)` —— 已有 ES 集群（8.12+）时复用,适合与全文检索/日志分析共栈（v2.0.5+）。
 
 ## MongoDBStore —— MongoDB 向量库后端（v2.0.4+）
 
@@ -209,11 +218,37 @@ store = MongoDBStore(
 
 三个 Store 的度量/过滤对比:
 
-| 维度 | `QdrantStore` | `MilvusLiteStore` | `MongoDBStore` |
-|---|---|---|---|
-| 度量类型 | `Cosine`/`Dot`/`Euclid`/`Manhattan` | `COSINE`/`IP`/`L2` | `cosine`/`euclidean`/`dotProduct` |
-| 动态 metadata 过滤 | ✅ 运行时 | ✅ 运行时 | ❌ 需 `filter_fields` 预声明 |
-| 额外参数 | — | `batch_size` | `database` / `index_name` / `filter_fields` |
+| 维度 | `QdrantStore` | `MilvusLiteStore` | `MongoDBStore` | `ElasticsearchStore`（v2.0.5+） |
+|---|---|---|---|---|
+| 度量类型 | `Cosine`/`Dot`/`Euclid`/`Manhattan` | `COSINE`/`IP`/`L2` | `cosine`/`euclidean`/`dotProduct` | cosine（dense_vector + HNSW kNN） |
+| 动态 metadata 过滤 | ✅ 运行时 | ✅ 运行时 | ❌ 需 `filter_fields` 预声明 | ✅ 运行时（复合 bool 聚合） |
+| 额外参数 | — | `batch_size` | `database` / `index_name` / `filter_fields` | `num_candidates` / `refresh` |
+
+## ElasticsearchStore —— Elasticsearch 向量库后端（v2.0.5+）
+
+`ElasticsearchStore` 基于 [Elasticsearch](https://www.elastic.co/) 的 dense_vector 字段 +
+HNSW 近似 kNN 检索。底层用 `elasticsearch.AsyncElasticsearch`（`elasticsearch[async]>=8.12`），
+全异步非阻塞：
+
+```bash
+uv pip install "agentscope[elasticsearch]"   # 装 elasticsearch[async]>=8.12
+```
+
+```python
+from agentscope.rag import ElasticsearchStore
+
+store = ElasticsearchStore(
+    hosts="http://localhost:9200",    # ES URL 或 URL 列表
+    num_candidates=100,               # kNN 候选数（1..10000，默认 100）
+    refresh="wait_for",               # 索引刷新策略：True / False / "wait_for"（默认 wait_for）
+    client_kwargs=None,               # 透传给 AsyncElasticsearch（如 api_key、ssl 配置）
+)
+# 需用 async with 进出
+```
+
+- record id 用内容 sha256 稳定生成（幂等插入）。
+- 与 `QdrantStore`/`MilvusLiteStore`/`MongoDBStore` 实现同一 `VectorStoreBase` 接口，
+  `KnowledgeBase` 用法完全一致。
 
 ## KnowledgeBase —— 运行时句柄
 

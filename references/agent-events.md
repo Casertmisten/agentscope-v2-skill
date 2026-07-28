@@ -7,7 +7,7 @@ v2 只有一个 `Agent` 类，不再区分 AgentBase/ReActAgentBase/ReActAgent�
 ### 导入
 
 ```python
-from agentscope.agent import Agent, ContextConfig, ReActConfig, ModelConfig
+from agentscope.agent import Agent, ContextConfig, ReActConfig, ModelConfig, InjectionConfig
 ```
 
 ### 构造参数
@@ -24,6 +24,7 @@ agent = Agent(
     model_config=ModelConfig(...),          # 模型重试/fallback 配置
     context_config=ContextConfig(...),      # 上下文压缩配置
     react_config=ReActConfig(...),          # ReAct 配置
+    injection_config=InjectionConfig(...),  # 运行时状态注入配置（v2.0.5+，可选）
 )
 ```
 
@@ -39,6 +40,11 @@ async for event in agent.reply_stream(user_msg):
 
 **返回类型**：`AsyncGenerator[AgentEvent, None]`
 
+可选参数（v2.0.5+）：
+- `structured_schema: Type[BaseModel] | None` — 传入 Pydantic 模型类触发结构化输出（见下文）。
+- `yield_final_msg: bool` — `True` 时在事件流末尾额外 `yield` 最终的 `Msg`（结构化输出场景
+  需要它才能拿到带 `structured_output` 字段的消息；默认 `False`）。
+
 `inputs` 参数支持多种类型：
 - `Msg | list[Msg]` — 新消息触发推理
 - `UserConfirmResultEvent` — 用户确认结果（继续之前的暂停）
@@ -53,6 +59,8 @@ final_msg: Msg = await agent.reply(user_msg)
 ```
 
 **返回类型**：`Msg`（消费所有事件，返回最终回复消息）
+
+支持 `structured_schema` 参数（v2.0.5+）产出 Pydantic 结构化输出，详见下文「结构化输出」。
 
 #### observe — 接收观察消息
 
@@ -83,6 +91,7 @@ react_config = ReActConfig(
     # 中断事件触发后，agent 回退并产出的替代文案（见下文「Agent 中断」）
     interruption_raise_cancelled_error=False,
     # True: 处理完中断后重新抛 CancelledError；False: 静默结束 reply
+    structured_output_grace_iters=5,   # v2.0.5+: 超过 max_iters 后留给结构化输出的额外迭代数
 )
 ```
 
@@ -115,7 +124,7 @@ context_config = ContextConfig(
 | 事件类型 | 说明 |
 |---|---|
 | `ReplyStartEvent` | reply 开始（含 session_id, reply_id, name） |
-| `ReplyEndEvent` | reply 结束 |
+| `ReplyEndEvent` | reply 结束（含 `finished_reason`；v2.0.5+ 出错时 `finished_reason=ERROR` 且带 `error: ErrorInfo`） |
 | `ModelCallStartEvent` | 模型调用开始（含 model_name） |
 | `ModelCallEndEvent` | 模型调用结束（含 input/output tokens） |
 | `TextBlockStartEvent` | 文本块开始 |
@@ -271,13 +280,19 @@ await agent.reply(UserInterruptEvent(reply_id="原reply_id"))
 2. emit 一条 fallback 助手消息（文案由 `ReActConfig.interruption_message` 控制）；
 3. 以 `ReplyEndReason.INTERRUPTED` 结束 reply，**不进入** reasoning-acting 循环。
 
-`ReplyEndEvent` 的 `finished_reason` 取值（`ReplyEndReason` 枚举）：
+`ReplyEndEvent` 的 `finished_reason` 取值（`ReplyFinishedReason` 枚举，v2.0.5+；旧的
+`ReplyEndReason` 仍保留但已 deprecated）：
 
 | 值 | 含义 |
 |---|---|
 | `completed` | 正常完成 |
 | `interrupted` | 被 `UserInterruptEvent` 中断 |
 | `exceed_max_iters` | 超过 `ReActConfig.max_iters` |
+| `error`（v2.0.5+） | reply 过程抛异常，`error: ErrorInfo` 字段填充错误分类 |
+
+> v2.0.5+：reply 出错时不再静默崩溃——`Msg` 和 `ReplyEndEvent` 都会带上 `finished_reason=ERROR`
+> 与 `error: ErrorInfo`（`type` 按 HTTP 语义分类，`message` 是通用文案不泄露密钥）。
+> 见下文「回复错误上报」。
 
 > 注意区分两类「中断」：
 > - **parked reply 的中断**：用 `UserInterruptEvent`（本文所述），针对等待 HITL/外部结果的 reply。
@@ -286,3 +301,109 @@ await agent.reply(UserInterruptEvent(reply_id="原reply_id"))
 >   清理后重新抛出，便于上层捕获）。
 >
 > 服务化场景下，HTTP 端 `POST /sessions/{sid}/interrupt` 会派发 `UserInterruptEvent`。
+
+## 结构化输出（v2.0.5+）
+
+`reply` / `reply_stream` 新增 `structured_schema: Type[BaseModel] | None` 参数。传入 Pydantic
+模型类后，Agent 在 ReAct 循环中装入内置的 `GenerateStructuredOutput` 工具，引导模型产出符合
+schema 的结构化结果，并写入 `Msg.structured_output`：
+
+```python
+from pydantic import BaseModel
+
+class WeatherReport(BaseModel):
+    city: str
+    temperature: float
+
+# 非流式
+res = await agent.reply(
+    UserMsg("user", "杭州天气如何？"),
+    structured_schema=WeatherReport,
+)
+print(res.structured_output)   # {"city": "Hangzhou", "temperature": 25.0}
+
+# 流式：需 yield_final_msg=True 才能拿到带 structured_output 的最终消息
+async for item in agent.reply_stream(
+    UserMsg("user", "杭州天气如何？"),
+    structured_schema=WeatherReport,
+    yield_final_msg=True,
+):
+    if isinstance(item, Msg):
+        print(item.structured_output)
+```
+
+要点：
+- 是 `reply` / `reply_stream` 的参数，**不是** `Agent(...)` 构造参数。
+- `ReActConfig.structured_output_grace_iters`（默认 5）：超过 `max_iters` 后额外留给结构化输出的迭代数。
+- `structured_output` 是 dict（Pydantic 模型 `.model_dump()` 的结果），存于 `Msg` 与 `ReplyContext`。
+- 内置工具 `GenerateStructuredOutput` 的权限始终 ALLOW（只读、并发安全），模型校验失败会重试。
+
+## 运行时状态注入 InjectionConfig（v2.0.5+）
+
+Agent 默认在每个 reasoning 步骤前，把**当前墙钟时间、(plan) 任务状态、上下文压缩临近预警**
+作为 `HintBlock` 追加到 `state.context`（不改 system prompt，避免破坏 prompt caching）。
+由 `InjectionConfig` 控制，从 `agentscope.agent` 导出：
+
+```python
+from agentscope.agent import Agent, InjectionConfig
+
+agent = Agent(
+    name="Assistant",
+    system_prompt="...",
+    model=model,
+    injection_config=InjectionConfig(
+        inject_runtime_state=True,    # 默认 True；False 完全关闭注入
+        timezone="UTC",               # 时区名；无效/缺 tzdata 时回退 UTC
+        time_format="%Y-%m-%dT%H:%M:%S",
+        time_interval=0.5,            # 小时；距上次注入超过该值再注入时间
+        context_buffer_ratio=0.2,     # 进入压缩阈值前 buffer 区时注入预警
+        template="...{runtime_state}...",  # 必须含 {runtime_state} 占位符
+        task_tool_names=["TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
+        emit_hint_event=True,         # 是否发 HintBlockEvent 供前端展示
+        extra_fields={},              # 额外注入字段
+    ),
+)
+```
+
+三个注入维度（各自独立判断是否触发）：
+- **时间**：context 中无记录时间，或距上次注入超过 `time_interval` 小时。
+- **任务**：存在 pending/in-progress 任务，且 agent 尚未感知（context 里无相关工具调用/注入记录）。
+- **上下文**：reply 第一轮且 token 数进入压缩阈值前的 buffer 区时，提醒 agent 压缩临近。
+
+约束：`context_buffer_ratio` 必须 < `ContextConfig.trigger_ratio`，否则 `Agent.__init__` 报错。
+HintBlock 的 source 固定为 `{"label": "System", "sublabel": "Runtime State"}`。
+
+## 回复错误上报（v2.0.5+）
+
+reply 抛异常时，框架不再让错误静默丢失，而是把错误分类写进 `Msg` 和 `ReplyEndEvent`，
+供前端/上层统一处理。类型从 `agentscope.types` 导出：
+
+```python
+from agentscope.types import ReplyFinishedReason, ErrorType, ErrorInfo
+
+msg = await agent.reply(user_msg)
+if msg.finished_reason == ReplyFinishedReason.ERROR:
+    err: ErrorInfo = msg.error
+    print(err.type, err.message)
+    # e.g. ErrorType.RATE_LIMIT, "Rate limit or quota exceeded — try again later."
+```
+
+`ErrorType`（按 HTTP 语义分类，provider 无关）：
+
+| `ErrorType` | HTTP 语义 | 典型场景 |
+|---|---|---|
+| `AUTHENTICATION` | 401 | API key 无效/过期 |
+| `PERMISSION` | 403 | 无访问权限 |
+| `RATE_LIMIT` | 429 | 限流/配额用尽 |
+| `INVALID_REQUEST` | 400/422 | 请求格式错误 |
+| `UPSTREAM` | 5xx | 服务端错误 |
+| `CONNECTION` | — | 网络中断/超时 |
+| `INTERNAL` | — | 框架内部错误 |
+| `UNKNOWN` | — | 未能分类 |
+
+要点：
+- `ErrorInfo.message` 是通用文案，**不**包含原始异常字符串/密钥/内部细节。
+- 服务化（`create_app`）的 SSE 流：reply 在发出 `ReplyEndEvent` 前崩溃时，会合成一个
+  `finished_reason=ERROR`、`error=_classify_error(e)` 的 `ReplyEndEvent` 并 publish 到 SSE，
+  同时 append 到持久化的 reply 消息。
+- `CancelledError`（用户取消）不受影响，走原有中断路径。

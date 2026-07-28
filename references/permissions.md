@@ -103,6 +103,23 @@ PermissionRule(
     → PASSTHROUGH → 由 PermissionEngine 继续规则匹配
 ```
 
+### 并发批量确认豁免（v2.0.5+）
+
+当一轮 reply 中**并发**发起多个工具调用时，相似调用不再重复弹框：如果某个非安全 ASK 的调用
+已被本批次早前某条 `suggested_rules` 中的 allow rule 覆盖（通过 `tool.match_rule` 判定），
+则该调用保持 `PENDING` 不再弹窗，等用户回答第一条后规则入库、下一轮 reply 重新评估。
+
+- **安全 ASK（`bypass_immune=True`）永不去重**——allow rule 无法清除它，必须各自单独弹框
+  （如 `rm -rf /`、写 `~/.bashrc`、含注入风险的命令）。
+- 批次共享一个 `kept_rules` 累加器（agent 内部 `list[PermissionRule]`），不暴露在
+  `PermissionContext`/`PermissionDecision` 上；复用的是既有 `suggested_rules` 与 `bypass_immune` 字段。
+
+### on_check_permission 中间件 hook（v2.0.5+）
+
+权限检查现在也可被 agent 级中间件拦截（洋葱模型），位于 `on_reasoning` 与 `on_acting` 之间。
+用于审计、自定义策略、按租户/角色覆写决策等。详见
+[middleware-workspace.md](middleware-workspace.md) 的「on_check_permission」小节。
+
 ## ToolBase 权限方法
 
 ```python
@@ -134,7 +151,7 @@ class MyTool(ToolBase):
 
 内置工具（Bash、Read、Write、Edit、Glob、Grep）都有完善的权限检查：
 
-- **Bash** — 命令模式匹配，只读命令（`ls`/`git status` 等）在各模式自动放行；工作目录内文件系统命令（`mkdir`/`rm`/`mv`/`cp` 等，要求所有目标路径都在工作目录内）在 `ACCEPT_EDITS` 和 `DONT_ASK` 模式自动放行
+- **Bash** — 命令模式匹配，只读命令（`ls`/`git status` 等）在各模式自动放行；工作目录内文件系统命令（`mkdir`/`rm`/`mv`/`cp` 等，要求所有目标路径都在工作目录内）在 `ACCEPT_EDITS` 和 `DONT_ASK` 模式自动放行；v2.0.5+ 起含注入风险（命令替换/控制流，如 `ls $(rm -rf /)`）的命令**不再判为只读**，会走 bypass-immune 的安全 ASK；`find . -delete`/`-exec`/`-ok` 等会改文件的 find 谓词也不再当只读放行
 - **Read/Write/Edit** — 文件路径模式匹配，敏感文件保护，`ACCEPT_EDITS`/`DONT_ASK` 模式下自动允许工作目录操作
 - **Glob/Grep** — 搜索路径匹配，只读在各模式自动放行，`EXPLORE` 模式下更是全部放行
 
