@@ -49,6 +49,10 @@ from agentscope.message import (
 )
 ```
 
+> ℹ️ 所有 Block 类型（v2.0.5+）均含自动生成的 `created_at: str`（ISO 时间戳），
+> 以及可选的 `finished_at: str | None`（用于 ToolCallBlock/ToolResultBlock 等需追踪完成时机的场景），
+> 无需手动赋值。
+
 ### TextBlock
 ```python
 TextBlock(text="文本内容")
