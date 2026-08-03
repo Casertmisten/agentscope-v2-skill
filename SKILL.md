@@ -18,7 +18,8 @@ KnowledgeBase / QdrantStore / MilvusLiteStore / MongoDBStore / ElasticsearchStor
 SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影 + AgentInvite 邀请已有 agent）、App 服务化（含 KnowledgeBaseManager /
 BlobStore / 内嵌或独立索引 worker / MessageBus 消息总线：
 RedisMessageBus / InMemoryMessageBus / Session Status 端点 / AsyncSQLAlchemyStorage 持久化）、Agent 中断（UserInterruptEvent）、
-回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR）、跨用户资源共享（ResourceAccessPolicy 抽象）、set_id_factory 全局 ID 工厂等。
+回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR）、跨用户资源共享（ResourceAccessPolicy 抽象）、
+Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 workspace）、set_id_factory 全局 ID 工厂等。
 ---
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
@@ -45,6 +46,8 @@ Session Status 统一状态查询端点（v2.0.4+）、Agent 中断机制（User
 Agent 结构化输出（structured_schema，v2.0.5+）、运行时状态注入（InjectionConfig，v2.0.5+）、
 跨用户资源共享（ResourceAccessPolicy 抽象，group/org 场景）、
 Workspace 新增 AppleContainerWorkspace / BubblewrapWorkspace（v2.0.5+）、Windows PowerShell 工具（v2.0.5+）、
+skill 路径支持 `~` 展开（v2.0.5+）、Hub 注册中心（GitHubMCPHub / ClawSkillHub，v2.0.5+，
+从 hub 浏览 MCP/Skill → 安装到个人库 → 拉入 workspace）、
 Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
@@ -136,6 +139,7 @@ asyncio.run(main())
 | 中间件（含 TTS / Tracing / Mem0 / ReMe / AgenticMemory / on_check_permission）和工作区 | [references/middleware-workspace.md](references/middleware-workspace.md) |
 | 服务化、RAG 服务层与子智能体模板 (SubAgentTemplate) | [references/middleware-workspace.md](references/middleware-workspace.md) |
 | Workspace 全部后端（含 AppleContainer / Bubblewrap）+ 跨用户资源共享 | [references/middleware-workspace.md](references/middleware-workspace.md) |
+| Hub 注册中心（GitHubMCPHub / ClawSkillHub，浏览-安装-拉入 MCP/Skill） | [references/middleware-workspace.md](references/middleware-workspace.md) |
 
 ## Credential 体系
 

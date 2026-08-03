@@ -424,10 +424,14 @@ workspace = LocalWorkspace(
     workdir="/path/to/workspace",
     workspace_id=None,                 # 可选，默认自动生成
     default_mcps=[mcp_client],         # 初始 MCP（仅首次生效）
-    skill_paths=["/path/to/skills"],   # 初始技能目录
+    skill_paths=["/path/to/skills"],   # 初始技能目录（v2.0.5+ 支持 ~/path 展开）
     instructions="自定义指令模板",       # 支持 {workdir} 占位符
 )
 ```
+
+> ℹ️ v2.0.5+ 起，`skill_paths`、`LocalSkillLoader(directory=...)`、`workspace.add_skill(path)`
+> 中的路径都会先 `expanduser` 再 `abspath`，因此可直接传 `~/my-skills/foo`，
+> 不再被误解析为相对当前工作目录的字面量。
 
 目录结构：
 
@@ -806,6 +810,8 @@ app = create_app(
     custom_subagent_templates=[...],       # 子智能体模板（v2.0.2+）
     custom_agent_cls=MyAgent,              # 自定义 Agent 子类（v2.0.2+）
     resource_access_policy=None,           # 跨用户资源共享策略（v2.0.4+）
+    mcp_hubs=None,                         # MCP hub 列表（v2.0.5+）
+    skill_hubs=None,                       # Skill hub 列表（v2.0.5+）
 )
 
 # 独立运行
@@ -922,6 +928,128 @@ storage = AsyncSQLAlchemyStorage(
 - `schedule_router` — 定时任务
 - `session_router` — 会话管理
 - `workspace_router` — 工作区操作
+- `hub_router` — Hub 浏览与安装（v2.0.5+）
+- `mcp_router` — 用户 MCP 库（v2.0.5+）
+- `skill_router` — 用户 Skill 库（v2.0.5+）
+
+## Hub — 从注册中心安装 MCP / Skill（v2.0.5+）
+
+Hub 让 agent service 从外部注册中心**浏览 → 安装到个人库（library）→ 拉入 workspace**，
+无需手写 `MCPClient` 配置或手动复制 skill 文件。内置两个 hub：
+
+| Hub | 注册内容 | 默认地址 | 认证 |
+|---|---|---|---|
+| `GitHubMCPHub` | MCP server（GitHub 官方 MCP Registry） | `https://api.mcp.github.com` | 免认证，token 仅提升限流 |
+| `ClawSkillHub` | Skill（[ClawHub](https://clawhub.ai) 公共 registry） | `https://clawhub.ai` | 免认证，token 仅提升限流 |
+
+Hub 通过 `create_app` 注入（不在配置文件中）：
+
+```python
+import os
+from agentscope.app import create_app
+from agentscope.app.hub import GitHubMCPHub, ClawSkillHub
+
+app = create_app(
+    storage=...,
+    message_bus=...,
+    workspace_manager=...,
+    mcp_hubs=[GitHubMCPHub()],                              # 默认连 GitHub MCP Registry
+    skill_hubs=[ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN"))],
+)
+```
+
+- `hub_id` 必须匹配 `[a-zA-Z0-9_-]+`（用作 URL path segment），同种 hub id 重复会抛 `ValueError`。
+- hub 的 HTTP client 在进程生命周期内只建一次（lifespan `__aenter__`），跨请求复用。
+
+### Card 概念
+
+Hub 上的一个条目叫 **card（卡片）**，是元数据模板，不是可直接使用的客户端：
+
+- `MCPCard` 的 `config_template` 带 `${...}` 占位符（API key 等），由用户在安装时填值，
+  占位符定义在 `inputs_schema`（JSON Schema，密钥字段标 `writeOnly:true` + `format:password`）。
+- `SkillCard` 无配置项——安装 skill 只是把文件复制进 workspace，没有输入表单。
+- card 有两个**故意分离**的标识：`id`（hub 本地寻址，可任意不透明字符串）与
+  `name`（安装后的客户端/skill 名，必须匹配 `[a-zA-Z0-9_-]+`，会组成工具名 `mcp__{name}__{tool}`）。
+- card 在不同 hub 间不合并，全局由 `(hub_id, card_id)` 二元组标识。
+
+### 直接用 Hub 客户端（Python 异步 API）
+
+```python
+from agentscope.app.hub import GitHubMCPHub, ClawSkillHub, MCPCard, SkillCard
+
+mcp_hub = GitHubMCPHub()
+page = await mcp_hub.list_mcps(user_id="u1", q="github", limit=20)  # MCPHubPage
+card = await mcp_hub.get_mcp(user_id="u1", card_id="github-mcp")    # MCPCard
+
+skill_hub = ClawSkillHub()
+page = await skill_hub.list_skills(user_id="u1", q="browser")        # SkillHubPage
+card = await skill_hub.get_skill(user_id="u1", card_id="runware/music")  # SkillCard
+archive = await skill_hub.download(user_id="u1", card_id="runware/music")  # SkillArchive
+```
+
+抽象方法（所有 hub 子类须实现）：
+- `MCPHubBase.list_mcps(user_id, q=None, cursor=None, limit=20) -> MCPHubPage`
+- `MCPHubBase.get_mcp(user_id, card_id) -> MCPCard`
+- `SkillHubBase.list_skills(user_id, q=None, cursor=None, limit=20) -> SkillHubPage`
+- `SkillHubBase.get_skill(user_id, card_id) -> SkillCard`
+- `SkillHubBase.download(user_id, card_id, version=None) -> SkillArchive`
+
+> ℹ️ `MCPHubBase` / `SkillHubBase` 是抽象基类，可自行子类化对接私有 registry。
+> `SkillArchive` 是 `NamedTuple(format, stream)`，`format` 为 `"zip"|"tar"|"tar.gz"`，
+> `stream` 是字节流，可流式写入 workspace 而不必整体缓存。
+
+### HTTP 路由（推荐用法）
+
+启动 service 后调用，`user_id` 通常由鉴权中间件注入：
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| GET | `/hub/mcp` | 列出所有已注册 MCP hubs |
+| GET | `/hub/mcp/{hub_id}/cards` | 浏览/搜索（query: `q`/`cursor`/`limit` 1-200） |
+| GET | `/hub/mcp/{hub_id}/cards/{card_id}` | 取单个 MCP card（含需用户填的 inputs） |
+| POST | `/hub/mcp/{hub_id}/cards/{card_id}/install` | 安装 MCP 到个人库 |
+| GET | `/hub/skill` | 列出所有已注册 skill hubs |
+| GET | `/hub/skill/{hub_id}/cards` | 浏览/搜索 skill |
+| GET | `/hub/skill/{hub_id}/cards/{card_id}` | 取单个 skill card（含 `SKILL.md` 正文） |
+| POST | `/hub/skill/{hub_id}/cards/{card_id}/install` | 安装 skill 到个人库 |
+
+**MCP 安装**（`POST .../install`，body 为 `InstallMCPRequest`）：
+
+```json
+{
+  "name": "my-github-mcp",      // 可选，默认 card.name；冲突时换名，同名返回 409
+  "values": {"GITHUB_TOKEN": "ghp_xxx"}   // 对 card.inputs_schema 的填值
+}
+```
+
+安装时用 `render_mcp(card, values, name)` 把模板渲染成可连接的 `MCPClient`，
+快照入库（`MCPRecord` 含 `hub_id`/`card_id`/`version`/`values`）。
+**安装时不测连接**——错的 key 在首次使用时才暴露。
+
+**Skill 安装**（`POST .../install?name=...`）只记录 card 元数据（`SkillRecord` 含 `SKILL.md` 正文快照），
+**不在此下载归档**——文件在拉入 workspace 时才按需从 hub 重新获取。
+
+### 拉入 workspace
+
+library 里的 MCP/skill 需拉入会话 workspace 才生效：
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| POST | `/workspace/mcp/from-library` | 把库里的 MCP 拉入会话 workspace |
+| POST | `/workspace/skill/from-library` | 把库里的 skill 拉入会话 workspace |
+| POST | `/workspace/skill/upload` | 浏览器文件夹上传安装 skill（不经 hub，限单文件 50 MiB / 总 500 MiB / 100 文件） |
+
+### ClawHub 的 card id 按 owner 作用域
+
+ClawHub 上 **slug（skill 名）并不唯一**——多个 publisher 可能用同一个 slug（如 `music`）。
+裸 slug 有歧义时，ClawHub API 会返回 `409 AMBIGUOUS_SKILL_SLUG`。
+
+为此，从 search/detail 端点取到的 card（含 owner 信息）其 `id` 形如 `"owner/slug"`（如 `runware/music`），
+下载时带 `ownerHandle` 参数精确定位；`name` 仍是裸 slug（成为 workspace 目录名，不能带分隔符）。
+catalog 浏览端点不返回 owner，歧义在 install/拉取时由 409 兜底提示。
+
+> ℹ️ Hub 功能完全通过 FastAPI HTTP 路由暴露，**无 CLI 命令**。
+> 前端 WebUI 有完整的 hub 浏览/安装界面。普通 agent 开发者（非服务化部署）一般无需直接用 hub 类。
 
 ## SubAgentTemplate — 子智能体模板（v2.0.2+）
 
