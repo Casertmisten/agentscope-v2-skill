@@ -924,6 +924,7 @@ storage = AsyncSQLAlchemyStorage(
 - `chat_router` — 对话（REST + SSE）
 - `credential_router` — 凭据管理
 - `model_router` — 模型配置
+- `embedding_model_router` — 列出某 credential 类型下可用 embedding 模型（`GET /embedding-model/`，v2.0.5+）
 - `tts_model_router` — TTS 模型配置（v2.0.2+）
 - `schedule_router` — 定时任务
 - `session_router` — 会话管理
