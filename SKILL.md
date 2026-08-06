@@ -17,19 +17,21 @@ DashScope CosyVoice / GeminiTTSModel 等）、RAG 知识库（agentscope.rag：
 KnowledgeBase / QdrantStore / MilvusLiteStore / MongoDBStore / ElasticsearchStore / Parser-Chunker 管线 / RAGMiddleware static+agentic 双模式）、
 SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影 + AgentInvite 邀请已有 agent）、App 服务化（含 KnowledgeBaseManager /
 BlobStore / 内嵌或独立索引 worker / MessageBus 消息总线：
-RedisMessageBus / InMemoryMessageBus / Session Status 端点 / AsyncSQLAlchemyStorage 持久化）、Agent 中断（UserInterruptEvent）、
+RedisMessageBus / InMemoryMessageBus / Session Status 端点 / AsyncSQLAlchemyStorage 持久化 / /health 健康检查端点 /
+workspace 文件读取端点 / Anthropic thinking_mode 推理控制）、Agent 中断（UserInterruptEvent）、
 回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR）、跨用户资源共享（ResourceAccessPolicy 抽象）、
 Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 workspace）、set_id_factory 全局 ID 工厂等。
 ---
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
 
-AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.5`。
+AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.6dev`。
 
 **核心特性**：事件驱动架构、权限系统（含 on_check_permission 中间件 hook、批量确认豁免、
 DEFAULT/DONT_ASK 只读快路径）、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
 REST+SSE 智能体服务（MessageBus 消息总线，含 InMemoryMessageBus 单节点轻量选项；
-AsyncSQLAlchemyStorage 多数据库持久化存储）、八种 Workspace 均支持
+AsyncSQLAlchemyStorage 多数据库持久化存储；`/health` 健康检查端点 v2.0.6+；
+workspace 产物文件读取端点 v2.0.6+）、八种 Workspace 均支持
 内置工具在容器/云沙箱执行（LocalBackend / DockerBackend / E2BBackend / K8sBackend / OpenSandboxBackend /
 DaytonaBackend / AppleContainerBackend / BubblewrapBackend）、Middleware 中间件（含
 TTSMiddleware / ReplyBudgetControlMiddleware / TracingMiddleware OpenTelemetry 追踪 /
@@ -48,6 +50,10 @@ Agent 结构化输出（structured_schema，v2.0.5+）、运行时状态注入�
 Workspace 新增 AppleContainerWorkspace / BubblewrapWorkspace（v2.0.5+）、Windows PowerShell 工具（v2.0.5+）、
 skill 路径支持 `~` 展开（v2.0.5+）、Hub 注册中心（GitHubMCPHub / ClawSkillHub，v2.0.5+，
 从 hub 浏览 MCP/Skill → 安装到个人库 → 拉入 workspace）、
+服务化 `/health` 健康检查端点（v2.0.6+，按组件就绪探测，sub-app 误挂时返回 503）、
+workspace 产物文件读取端点（`GET /workspace/directories` / `/workspace/files` + download-token，v2.0.6+）、
+BackendBase 抽象对外导出 `DirEntry`（v2.0.6+）、
+Anthropic 新增 `thinking_mode` / `thinking_display` / `reasoning_effort` 推理控制参数（v2.0.6+）、
 Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）

@@ -470,7 +470,7 @@ from agentscope.workspace import (
     DockerBackend, E2BBackend, K8sBackend, OpenSandboxBackend, DaytonaBackend,
     AppleContainerBackend, BubblewrapBackend,  # 后两者 v2.0.5+
 )
-from agentscope.tool import BackendBase, LocalBackend, ExecResult
+from agentscope.tool import BackendBase, LocalBackend, ExecResult, DirEntry  # DirEntry v2.0.6+
 ```
 
 > ℹ️ 普通用 `LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace` 的开发者无需手动构造 Backend——workspace 内部会自行创建。
@@ -928,10 +928,67 @@ storage = AsyncSQLAlchemyStorage(
 - `tts_model_router` — TTS 模型配置（v2.0.2+）
 - `schedule_router` — 定时任务
 - `session_router` — 会话管理
-- `workspace_router` — 工作区操作
+- `workspace_router` — 工作区操作（含产物文件读取，v2.0.6+）
 - `hub_router` — Hub 浏览与安装（v2.0.5+）
 - `mcp_router` — 用户 MCP 库（v2.0.5+）
 - `skill_router` — 用户 Skill 库（v2.0.5+）
+- `health_router` — `/health` 健康检查（v2.0.6+）
+
+### /health 健康检查端点（v2.0.6+）
+
+`GET /health` 报告服务存活性和**按组件的就绪状态**，不做任何 I/O——只检查 `app.state` 上挂载的对象，
+所以探测它不会触碰 Redis、数据库或 workspace 后端：
+
+```json
+{
+  "status": "ok",            // 或 "not_ready"
+  "version": "2.0.6",
+  "components": {
+    "storage": "ok",
+    "message_bus": "ok",
+    "workspace_manager": "ok",
+    "background_task_manager": "ok",
+    "chat_run_registry": "ok",
+    "scheduler_manager": "ok",
+    "resource_access_service": "ok",
+    "chat_service": "ok",
+    "session_service": "ok",
+    "mcp_hubs": "ok",        // 未配置则为 "disabled"
+    "skill_hubs": "ok",      // 未配置则为 "disabled"
+    "knowledge_base": "disabled"  // 未启用 KB 时为 disabled；启用但 worker 缺失为 not_ready
+  }
+}
+```
+
+- 组件状态取值：`ok` / `not_ready`（应存在但缺失）/ `disabled`（可选组件未配置）。
+- 任一组件 `not_ready` 时整体 `status="not_ready"` 并返回 **HTTP 503**。
+- **核心用途**：捕获 sub-app 误挂（`root.mount("/agentscope", app)`）。Starlette 不运行被挂载子 app 的
+  lifespan，导致所有 lifespan 组件缺失、业务端点全部失效；此端点会把这种静默误配置变成一个明确的 503 信号。
+- 需要 `X-User-ID` 鉴权（与其它业务端点一致）。
+
+### workspace 产物文件读取端点（v2.0.6+）
+
+服务化后，前端可读取某 session 对应 workspace 内的产物文件（图表、报告等）。三个端点：
+
+```python
+# 1. 列目录
+# GET /workspace/directories?agent_id=...&session_id=...&path=./
+# -> [{name, is_dir, size_bytes, updated_at}, ...]   （DirectoryEntry 列表）
+
+# 2. 申请一次性下载 token（浏览器原生下载无法带自定义 header，故用 URL 里的能力令牌）
+# POST /workspace/files/download-token
+#      {agent_id, session_id, path}  ->  {token, expires_at}
+# token 默认 60s 有效，HMAC 签名绑定 (expires_at, user_id, path) 三元组，仅限该 path。
+
+# 3. 下载文件
+# GET /workspace/files?token=...   （带 token 时无需 X-User-ID header）
+# 或 GET /workspace/files  + X-User-ID header（直接鉴权）
+```
+
+- `DirectoryEntry`（`name` / `is_dir` / `size_bytes` / `updated_at`）由 workspace 后端的
+  `BackendBase.scandir` 产生，目录恒返回 `size_bytes=null`。
+- download-token 是**能力令牌而非身份**：只授权"该用户读取该路径一小段时间"，便于浏览器 `<a download>`
+  或导航式下载把凭证放在 URL 里。换用 OAuth/JWT 时只改令牌签发来源，校验逻辑不变。
 
 ## Hub — 从注册中心安装 MCP / Skill（v2.0.5+）
 
@@ -1048,6 +1105,9 @@ ClawHub 上 **slug（skill 名）并不唯一**——多个 publisher 可能用�
 为此，从 search/detail 端点取到的 card（含 owner 信息）其 `id` 形如 `"owner/slug"`（如 `runware/music`），
 下载时带 `ownerHandle` 参数精确定位；`name` 仍是裸 slug（成为 workspace 目录名，不能带分隔符）。
 catalog 浏览端点不返回 owner，歧义在 install/拉取时由 409 兜底提示。
+
+> ℹ️ v2.0.6 起，`409 AMBIGUOUS_SKILL_SLUG` 的响应体会被解析成可读提示（列出所有同名 publisher 的 ref，
+> 引导用户按名搜索后选装），而非原始 JSON。
 
 > ℹ️ Hub 功能完全通过 FastAPI HTTP 路由暴露，**无 CLI 命令**。
 > 前端 WebUI 有完整的 hub 浏览/安装界面。普通 agent 开发者（非服务化部署）一般无需直接用 hub 类。

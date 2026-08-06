@@ -176,6 +176,9 @@ ToolResponse(
 - `AsyncGenerator[ToolChunk]`（流式）
 - `Generator[ToolChunk]`（同步流式）
 
+> ℹ️ 流式累积时，`ToolResponse` 的状态按后到的 chunk 更新（`RUNNING` → `SUCCESS`/`INTERRUPTED`/`DENIED`/`ERROR`）。
+> 但 **`ERROR` 是终态优先级最高**：一旦进入 `ERROR`，后续的 `INTERRUPTED` / `DENIED` chunk 不会再覆盖它（v2.0.6+ 修复）。
+
 ## Toolkit
 
 ```python

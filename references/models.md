@@ -105,7 +105,8 @@ model = credential.get_chat_model_class()(
 > ℹ️ 模型清单由各 provider 目录下的 YAML 文件动态加载（`model/_<provider>/_models/*.yaml`），
 > 没有静态 Python 常量。新增模型通常只加 YAML，不改代码。例如 v2.0.5 新增了
 > `kimi-k3`（Moonshot，1048576 上下文，多模态）、DashScope 的 `qwen3.7-plus`/`deepseek-v4-pro`/`glm-5.2`，
-> 均可通过 `credential.list_models()` 查到。`kimi-k3` 在 `MoonshotChatModel` 中额外支持
+> v2.0.6 全量刷新了各 provider 的 model card（新增 Claude opus-5/sonnet-5/fable/opus-4-8、Gemini 3.5/3.6-flash、
+> GPT-5.6 系列、Kimi K2.7-code 等），均可通过 `credential.list_models()` 查到。`kimi-k3` 在 `MoonshotChatModel` 中额外支持
 > `reasoning_effort: "low"|"high"|"max"` 参数。
 
 ### OpenAI Chat 模型专属参数
@@ -129,6 +130,34 @@ model = OpenAIChatModel(
 
 > ℹ️ `OpenAIChatModel.Parameters.max_tokens` 字段名不变（v2.0.4.post1+），但发送到 OpenAI API 时
 > 会被映射为请求体里的 `max_completion_tokens` 键（对齐 OpenAI 新版 Chat Completions API）。
+
+### Anthropic Chat 模型专属参数
+
+`AnthropicChatModel` 支持三组 Claude 推理控制参数（v2.0.6+），用于精细调节 extended thinking 与推理强度：
+
+```python
+from agentscope.model import AnthropicChatModel
+
+model = AnthropicChatModel(
+    credential=credential,
+    model="claude-opus-4-7",
+    parameters=AnthropicChatModel.Parameters(
+        thinking_mode="adaptive",       # adaptive | enabled | disabled（v2.0.6+）
+        thinking_display="summarized",  # summarized | omitted（v2.0.6+）
+        reasoning_effort="high",        # low | medium | high | xhigh | max（v2.0.6+）
+    ),
+)
+```
+
+- `thinking_mode` — 如何思考。`adaptive` 让模型自行决定深浅，是 Claude Opus 4.7 及以上**唯一接受**的模式
+  （这些模型拒绝旧的 budget-based `enabled` 模式）。优先级高于 `thinking_enable`；不设则回退到 `thinking_enable`。
+- `thinking_display` — thinking 块是否带可读摘要。Opus 4.7+ 默认 `omitted`，设 `summarized` 才能看到推理过程。
+  与 `thinking_mode="disabled"` 互斥（禁用时 API 不接受 display）。
+- `reasoning_effort` — 整个回复（不止 thinking，含工具调用与解释）的 token 投入。作为 Anthropic 的
+  `output_config.effort` 发送，API 默认 `high`。各模型支持的等级不同，Claude Sonnet 4.5 / Haiku 4.5 **不接受**此参数。
+
+> ℹ️ 旧参数 `thinking_enable` + `thinking_budget` 仍保留（budget-based `enabled` 模式）。新的 `thinking_mode`
+> 是推荐用法，自动按模式组装 `thinking` 字段（`adaptive`/`disabled` 不带 budget，`enabled` 才带 budget_tokens）。
 
 ### Omni 模型的音频输出（v2.0.2+）
 

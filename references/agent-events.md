@@ -293,6 +293,9 @@ await agent.reply(UserInterruptEvent(reply_id="原reply_id"))
 > v2.0.5+：reply 出错时不再静默崩溃——`Msg` 和 `ReplyEndEvent` 都会带上 `finished_reason=ERROR`
 > 与 `error: ErrorInfo`（`type` 按 HTTP 语义分类，`message` 是通用文案不泄露密钥）。
 > 见下文「回复错误上报」。
+>
+> v2.0.6+：`ChatResponse.finished_reason` 字段改为 `default_factory`，修复被中断的响应其 `interrupted`
+> reason 被错误重置为 `completed` 的问题。
 
 > 注意区分两类「中断」：
 > - **parked reply 的中断**：用 `UserInterruptEvent`（本文所述），针对等待 HITL/外部结果的 reply。
