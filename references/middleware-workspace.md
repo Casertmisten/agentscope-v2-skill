@@ -812,6 +812,7 @@ app = create_app(
     resource_access_policy=None,           # 跨用户资源共享策略（v2.0.4+）
     mcp_hubs=None,                         # MCP hub 列表（v2.0.5+）
     skill_hubs=None,                       # Skill hub 列表（v2.0.5+）
+    channels=None,                         # Channel 适配器类列表（v2.0.6+，如 [FeishuChannel, DiscordChannel]）
 )
 
 # 独立运行
@@ -932,6 +933,7 @@ storage = AsyncSQLAlchemyStorage(
 - `hub_router` — Hub 浏览与安装（v2.0.5+）
 - `mcp_router` — 用户 MCP 库（v2.0.5+）
 - `skill_router` — 用户 Skill 库（v2.0.5+）
+- `channel_router` — IM 频道管理（`/channels`，v2.0.6+）
 - `health_router` — `/health` 健康检查（v2.0.6+）
 
 ### /health 健康检查端点（v2.0.6+）
@@ -990,7 +992,159 @@ storage = AsyncSQLAlchemyStorage(
 - download-token 是**能力令牌而非身份**：只授权"该用户读取该路径一小段时间"，便于浏览器 `<a download>`
   或导航式下载把凭证放在 URL 里。换用 OAuth/JWT 时只改令牌签发来源，校验逻辑不变。
 
-## Hub — 从注册中心安装 MCP / Skill（v2.0.5+）
+## Channel — 接入 IM 平台（v2.0.6+）
+
+Channel（频道）把 AgentScope agent 接入即时通讯平台（飞书 / Discord），让 IM 群/私聊里的消息
+直接驱动 agent 会话。这是**纯服务化层**功能——只在 `create_app` 启动的 FastAPI 服务里生效，
+SDK 层的 `Agent` / `reply_stream` 本身不变。
+
+### 启用
+
+通过 `create_app` 的 `channels` 参数传入适配器**类**（不是实例）。传入至少一个类即开启整个
+channel 子系统（路由、生命周期调度、回复转发）；为 `None`（默认）则该功能完全关闭：
+
+```python
+from agentscope.app import create_app
+from agentscope.app.channel import DiscordChannel, FeishuChannel
+
+app = create_app(
+    storage=storage,
+    message_bus=message_bus,
+    workspace_manager=ws_manager,
+    channels=[DiscordChannel, FeishuChannel],   # v2.0.6+
+)
+```
+
+内置两个适配器：
+
+| 类 | `channel_type` | 认证字段 | 连接方式 |
+|---|---|---|---|
+| `FeishuChannel` | `"feishu"` | `app_id` + `app_secret` | lark-oapi WebSocket 长连接（独立线程 + 自有 loop） |
+| `DiscordChannel` | `"discord"` | `bot_token` + `application_id` | discord.py gateway WebSocket（跑在 app loop） |
+
+### 数据模型
+
+频道实例本身是持久化记录 `ChannelRecord`，由 REST CRUD 管理；运行中的适配器实例是它的投影。
+核心字段：
+
+```python
+from agentscope.app.storage import (
+    ChannelRecord, ChannelBinding, RoutingConfig,
+    SessionSettings, SessionScope,
+)
+
+# 一条路由规则：匹配某事件 → 决定由哪个 agent 处理 + 如何分组会话
+ChannelBinding(
+    match_key="chat_id",        # 匹配 event.chat_id；也可是 "user_id" 或 event.metadata 里的 key
+    match_value="oc_xxx",       # 精确匹配；"*" 表示 catch-all（必须且只能在最后一条）
+    agent_id="agent-uuid",      # 命中后由哪个 agent 处理
+    session_scope=SessionScope.PER_CHAT,   # 会话分组粒度
+)
+
+# 路由配置：有序规则列表，首条命中生效；末条必须是 catch-all
+RoutingConfig(bindings=[..., ChannelBinding(match_value="*", agent_id="默认agent")])
+
+# 派生会话设置
+SessionSettings(
+    chat_model_config={...},              # 必填，频道创建的会话无全局默认模型
+    fallback_chat_model_config=None,      # 可选 fallback 模型
+    permission_mode="default",            # 默认 default——工具审批走交互卡片而非自动拒绝
+)
+```
+
+- `SessionScope.PER_CHAT`：每个群一个会话（私聊天然 per-user）。
+- `SessionScope.PER_CHAT_USER`：群内每个成员隔离成独立会话。
+- `(agent_id, session_id)` **由纯函数从事件确定性派生**（`uuid5` of `channel:agent:scope_key`），
+  无持久化的 channel→session 映射表——所以多节点零协调得到同一结果，会话创建幂等。
+
+### 架构：入站数据面 vs 出站转发
+
+Channel 子系统分两层，避免双向耦合：
+
+```
+IM 平台 ──消息──▶ Channel(适配器) ──emit──▶ ChannelGateway ──▶ 派生 (agent,session) ──▶ run
+                  (维持长连接、归一化事件)     (薄编排：路由/会话/媒体聚合)                 │
+                  ◀──send_response─── ChannelLifecycleDispatcher ◀──订阅 run 事件流─────┘
+                                       (出站转发：把回复折叠后送回平台)
+```
+
+- **`ChannelGateway`**（入站）：`process(event)` 是唯一入口。消息 → 路由到 `(agent_id, session_id)`
+  并入队为一个 run（空闲时是新的 user turn；运行中则注入为 `HintBlock` inbox 提示）。卡片点击 →
+  从 session state 读权威的待审批工具调用并 resume run。**不收集也不发送回复**。
+- **`ChannelLifecycleDispatcher`**（出站 + 生命周期）：每节点一个，把本节点的活跃适配器集合
+  与 storage 对账（lifecycle 通知 + 定期 sweep 自愈）。它还订阅每个频道相关 run 的事件流，
+  无缝地（先订阅、再回放日志、按 `entry_id` 去重）喂给本地 channel 的 `send_response`——
+  channel 负责折叠渲染（流式卡片/确认卡片），dispatcher 只喂数据。
+- **`ChannelService`**：无状态 CRUD（校验、写记录、发 lifecycle 通知），不持有任何运行实例。
+
+> 这种拆分让**定时/后台 run** 的输出也能送达频道——不只是入站消息触发的回复。
+
+### 权限审批走交互卡片
+
+频道会话默认 `permission_mode="default"`。当一个工具调用需要用户确认（`RequireUserConfirmEvent`）时：
+
+1. channel 在平台上渲染一张**确认卡片**（飞书 interactive card / Discord button），卡片上**钉住**
+   当时的 `(agent_id, session_id, tool_call_id)`。
+2. 用户点击 → channel 发出 `ChannelConfirmationResultEvent`，经同一 gateway 入口。
+3. gateway 优先用卡片上钉定的目标（而非重新路由），从 session state 读**权威的**待审批工具调用，
+   resume 那个 run。过期的/重复的点击找不到 ASKING 状态的工具调用，自然幂等忽略。
+
+### channel 暴露给 agent 的工具
+
+每个 channel 可通过 `list_tools(workspace)` 暴露平台工具给 agent（例如「给当前对话以外的某个
+群/用户发消息」）。飞书内置 5 个工具，组成发现 → 发送的闭环：
+
+| 工具 | 作用 |
+|---|---|
+| `ListChats` / `ListChatMembers` | 发现：返回 `receive_id` + `receive_id_type` |
+| `SendMessage` / `SendFile` / `SendImage` | 发送：消费 discovery 给出的 id 定向送达 |
+
+> ℹ️ 这些工具由频道实例按需注入到该会话的 workspace，普通 SDK agent 开发者无需手动注册。
+
+### 自定义平台
+
+继承 `ChannelBase` 即可接入新平台——子类在**类自身**上声明平台元数据，service 据此自动渲染
+前端表单、做 bot 唯一性校验、按记录构造实例：
+
+```python
+from agentscope.app.channel import ChannelBase, ChannelCapability
+
+class MyChannel(ChannelBase):
+    channel_type = "myplatform"          # 唯一类型 id
+    display_name = "My Platform"
+    platform_bot_id_field = "bot_id"     # 用于拒绝同一 bot 绑两个频道
+
+    class Credentials(BaseModel):        # 凭据字段；password 格式会脱敏
+        bot_id: str
+        token: str = Field(json_schema_extra={"format": "password"})
+
+    class Config(BaseModel):             # 非密的行为开关
+        only_at_reply: bool = True
+
+    capabilities = ChannelCapability(text=True, markdown=False, interactive=True)
+
+    def __init__(self, channel_id, credentials, config): ...
+    async def start_listening(self, emit): ...   # 维持长连接，归一化事件后 await self._emit(event)
+    async def send_response(self, event, events): ...  # 消费 run 事件流并送达平台
+```
+
+### REST API
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| GET | `/channels/types` | 列出已注册的平台类型 + JSON Schema（前端渲染表单用） |
+| GET | `/channels/` | 列出当前用户的频道（凭据脱敏） |
+| POST | `/channels/` | 创建频道（拒绝同一 bot 重复绑定，返回 409） |
+| GET/PATCH/DELETE | `/channels/{id}` | 详情 / 更新路由·会话·配置（凭据与类型不可变）/ 删除 |
+| POST | `/channels/{id}/enable` · `/disable` | 启停 |
+| GET | `/channels/{id}/status` | 实时连接状态（`stopped/connecting/connected/retrying/failed`） |
+| GET | `/channels/{id}/sessions` | 该频道派生的会话 |
+| GET | `/channels/{id}/chat_ids` | 路由配置可用的群（平台列表 ∪ 被动见过 inbound 的） |
+
+> ⚠️ Channel 功能属于服务化部署层，依赖 Redis 或 SQLAlchemy storage + MessageBus。
+> 普通单 agent SDK 开发无需关心。多节点部署时每个节点都会 host 所有启用频道（无分片）。
+
+
 
 Hub 让 agent service 从外部注册中心**浏览 → 安装到个人库（library）→ 拉入 workspace**，
 无需手写 `MCPClient` 配置或手动复制 skill 文件。内置两个 hub：
