@@ -18,7 +18,8 @@ class AgentState(BaseModel):
     summary: str | list[TextBlock|DataBlock]  # 压缩后的上下文摘要
     context: list[Msg]                   # 对话上下文（替代 v1 的 Memory）
     reply_id: str                        # 当前 reply 的 ID
-    cur_iter: int                        # 当前推理-行动迭代次数
+    cur_iter: int                        # 当前推理-行动迭代次数（一轮 = 一次 reasoning-acting，
+                                         #   仅当本轮产生的全部 tool call 都拿到结果后才 +1）
     permission_context: PermissionContext  # 权限上下文
     tool_context: ToolContext            # 工具缓存和激活的工具组
     tasks_context: TaskContext           # 任务列表
@@ -27,6 +28,18 @@ class AgentState(BaseModel):
 
 > `middle_context` 供中间件在多次 reply 之间持久化状态（例如 `ReplyBudgetControlMiddleware`
 > 把每个 reply 的累计 token 记在这里，以 `middleware_key[reply_id]` 为键）。
+
+### cur_iter 与 get_unfinished_tool_calls — 轮次计数
+
+一轮 reasoning-acting 在**它产生的全部 tool call 都拿到结果后**才算结束（`cur_iter += 1`）。
+当推理产出了 tool call、或 acting 把其中一些停泊在用户确认/外部执行上时，本轮尚未结束、不计数
+（v2.0.6+ 修复，此前因 HITL 中断路径导致同一轮被重复计数）。`AgentState.get_unfinished_tool_calls(name)`
+返回当前 reply 末尾消息中尚无对应 `tool_result` 的 `ToolCallBlock`，正是判断"本轮是否结束"的依据：
+
+```python
+# 仅检查该 agent 自己署名的末尾消息（reply_id 匹配）；空列表 = 本轮 reasoning-acting 已完成
+unfinished = state.get_unfinished_tool_calls(agent.name)
+```
 
 ### context — 对话上下文
 

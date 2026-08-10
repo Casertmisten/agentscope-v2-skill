@@ -17,15 +17,17 @@ DashScope CosyVoice / GeminiTTSModel 等）、RAG 知识库（agentscope.rag：
 KnowledgeBase / QdrantStore / MilvusLiteStore / MongoDBStore / ElasticsearchStore / Parser-Chunker 管线 / RAGMiddleware static+agentic 双模式）、
 SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影 + AgentInvite 邀请已有 agent）、App 服务化（含 KnowledgeBaseManager /
 BlobStore / 内嵌或独立索引 worker / MessageBus 消息总线：
-RedisMessageBus / InMemoryMessageBus / Session Status 端点 / AsyncSQLAlchemyStorage 持久化 / /health 健康检查端点 /
-workspace 文件读取端点 / Anthropic thinking_mode 推理控制 / Channel IM 频道接入飞书与 Discord）、Agent 中断（UserInterruptEvent）、
+RedisMessageBus / InMemoryMessageBus / Session Status 端点（含 list_sessions 内联 status + 裁剪 context） /
+AsyncSQLAlchemyStorage 持久化 / /health 健康检查端点 / workspace 文件读取与状态端点（WorkspaceService +
+DirectoryListing + WorkspaceStatus/GitStatus + session cwd 工作目录）/ extra_agent_middlewares 工厂 workspace 参数 /
+Anthropic thinking_mode 推理控制 / Channel IM 频道接入飞书与 Discord）、Agent 中断（UserInterruptEvent）、
 回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR）、跨用户资源共享（ResourceAccessPolicy 抽象）、
 Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 workspace）、set_id_factory 全局 ID 工厂等。
 ---
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
 
-AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.6dev`。
+AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.6`。
 
 **核心特性**：事件驱动架构、权限系统（含 on_check_permission 中间件 hook、批量确认豁免、
 DEFAULT/DONT_ASK 只读快路径）、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
@@ -51,7 +53,14 @@ Workspace 新增 AppleContainerWorkspace / BubblewrapWorkspace（v2.0.5+）、Wi
 skill 路径支持 `~` 展开（v2.0.5+）、Hub 注册中心（GitHubMCPHub / ClawSkillHub，v2.0.5+，
 从 hub 浏览 MCP/Skill → 安装到个人库 → 拉入 workspace）、
 服务化 `/health` 健康检查端点（v2.0.6+，按组件就绪探测，sub-app 误挂时返回 503）、
-workspace 产物文件读取端点（`GET /workspace/directories` / `/workspace/files` + download-token，v2.0.6+）、
+workspace 产物文件读取与状态端点（`GET /workspace/directories` 返回 `DirectoryListing` 含解析后绝对路径 /
+`GET /workspace/status` 返回 `WorkspaceStatus`（workdir + cwd + `GitStatus`） / `/workspace/files` + download-token，
+背后统一收敛到 `WorkspaceService` 服务层，v2.0.6+）、
+Session 工作目录（`SessionConfig.cwd` 锚点 + `GET /workspace/status` git 状态，v2.0.6+）、
+`GET /sessions` 返回的 `SessionView` 内联 `status` 字段并裁剪 `context/summary/tool_context`（`is_running` deprecated，v2.0.6+）、
+`PATCH /sessions/{id}` 在 run 持有 session 时返回 409（v2.0.6+）、
+`extra_agent_middlewares` 工厂新增第四个 `workspace` 参数（旧三参数继续兼容，v2.0.6+）、
+`cur_iter` 轮次计数修复（一轮仅在全部 tool call 拿到结果后才计数，新增 `AgentState.get_unfinished_tool_calls`，v2.0.6+）、
 BackendBase 抽象对外导出 `DirEntry`（v2.0.6+）、
 Anthropic 新增 `thinking_mode` / `thinking_display` / `reasoning_effort` 推理控制参数（v2.0.6+）、
 Channel IM 频道（接入飞书 / Discord，ChannelBase 适配器 + ChannelGateway 入站路由 +

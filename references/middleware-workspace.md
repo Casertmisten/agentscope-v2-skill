@@ -829,7 +829,21 @@ root.mount("/agentscope", app)
 >
 > 注意区分两类 middleware 参数：
 > - `extra_middlewares` —— 加到 **FastAPI 应用**层（ASGI 中间件，处理 CORS/鉴权/限流等 HTTP 层逻辑）。
-> - `extra_agent_middlewares` —— 加到**每个 Agent 实例**的 `MiddlewareBase` 中间件（拦截 reply/reasoning 等）。
+> - `extra_agent_middlewares` —— 加到**每个 Agent 实例**的 `MiddlewareBase` 中间件工厂（拦截 reply/reasoning 等）。
+>
+> `extra_agent_middlewares` 是一个异步工厂，每个 chat turn 装配 agent 时调用一次，可返回
+> user/session 专属中间件（鉴权、审计、租户隔离等）。签名有两种，服务端用 `inspect.signature` 探测
+> 后按兼容形式调用——**旧的三参数工厂继续可用**（v2.0.6+ 新增第四个参数）：
+> ```python
+> # 旧形式（仍兼容）：(user_id, agent_id, session_id) -> Awaitable[list[MiddlewareBase]]
+> # 新形式（v2.0.6+）：(user_id, agent_id, session_id, workspace) -> Awaitable[list[MiddlewareBase]]
+> async def longterm_memory_factory(user_id, agent_id, session_id, workspace):
+>     # workspace 是该 session 解析出的 WorkspaceBase，暴露 workdir / get_backend()，
+>     # 便于挂文件系统级中间件（如 AgenticMemoryMiddleware）。
+>     from agentscope.middleware import AgenticMemoryMiddleware
+>     return [AgenticMemoryMiddleware(workdir=workspace.workdir, backend=workspace.get_backend())]
+> ```
+> 默认 PER_AGENT workspace 隔离下，同一 agent 跨 session 复用同一 workspace，故这样挂的长期记忆会跨 session 保留。
 >
 > 另有 AG-UI 协议适配层：服务会把内部 `AgentEvent` 转换成 [AG-UI](https://docs.google.com/document/d/1F8gZV5mcrzBB_Lu6p1Tq7v5K0eJ7r5K2/) 兼容的 SSE 事件流，方便接入标准 AG-UI 客户端。
 
@@ -968,27 +982,41 @@ storage = AsyncSQLAlchemyStorage(
   lifespan，导致所有 lifespan 组件缺失、业务端点全部失效；此端点会把这种静默误配置变成一个明确的 503 信号。
 - 需要 `X-User-ID` 鉴权（与其它业务端点一致）。
 
-### workspace 产物文件读取端点（v2.0.6+）
+### workspace 产物文件读取与状态端点（v2.0.6+）
 
-服务化后，前端可读取某 session 对应 workspace 内的产物文件（图表、报告等）。三个端点：
+服务化后，前端可读取某 session 对应 workspace 内的产物文件（图表、报告等），并查询 session
+当前聚焦的目录及其 git 状态。背后的解析、下载令牌签发、skill 上传、git 汇总统一收敛到
+`WorkspaceService`（`app.state.workspace_service`，lifespan 内装配）：
 
 ```python
-# 1. 列目录
+# 1. 列目录（返回 DirectoryListing，含解析后的绝对路径）
 # GET /workspace/directories?agent_id=...&session_id=...&path=./
-# -> [{name, is_dir, size_bytes, updated_at}, ...]   （DirectoryEntry 列表）
+# -> {path: "/abs/resolved", entries: [{name, is_dir, size_bytes, updated_at}, ...]}
+# path 可绝对可相对（相对于 workspace 根），不限定在根目录内（沙箱后端的可达 FS 就是沙箱）。
+# 回传解析后的绝对 path，是因为相对调用者无法自行算出根（LocalBackend 是宿主目录，容器后端是沙箱内固定路径）。
 
-# 2. 申请一次性下载 token（浏览器原生下载无法带自定义 header，故用 URL 里的能力令牌）
+# 2. session 工作目录状态（v2.0.6+）
+# GET /workspace/status?agent_id=...&session_id=...
+# -> WorkspaceStatus{workdir, cwd, git: GitStatus | None}
+# cwd 取自 session 自身的 cwd（见 SessionConfig.cwd），而非查询参数——它是 session 的锚点。
+# git 是尽力而为：非仓库/git 缺失/命令超时/后端不可达都收敛为 git=null，其余字段照常返回。
+
+# 3. 申请一次性下载 token（浏览器原生下载无法带自定义 header，故用 URL 里的能力令牌）
 # POST /workspace/files/download-token
 #      {agent_id, session_id, path}  ->  {token, expires_at}
 # token 默认 60s 有效，HMAC 签名绑定 (expires_at, user_id, path) 三元组，仅限该 path。
 
-# 3. 下载文件
+# 4. 下载文件
 # GET /workspace/files?token=...   （带 token 时无需 X-User-ID header）
 # 或 GET /workspace/files  + X-User-ID header（直接鉴权）
 ```
 
-- `DirectoryEntry`（`name` / `is_dir` / `size_bytes` / `updated_at`）由 workspace 后端的
+- `DirectoryListing`（v2.0.6+，`path` + `entries`）取代原先裸 `DirectoryEntry` 列表，`entries` 中的
+  `DirectoryEntry`（`name` / `is_dir` / `size_bytes` / `updated_at`）由 workspace 后端的
   `BackendBase.scandir` 产生，目录恒返回 `size_bytes=null`。
+- `GitStatus` 汇总分支 / HEAD SHA / ahead-behind / 增删行 / staged/unstaged/untracked/conflicted 文件数。
+  通过 `git --no-optional-locks status --porcelain=v2 -z` + `git diff --shortstat HEAD` 收集，
+  `--no-optional-locks` 避免与 agent 自身 Bash 抢 `.git/index.lock`；命令设 5s 超时。
 - download-token 是**能力令牌而非身份**：只授权"该用户读取该路径一小段时间"，便于浏览器 `<a download>`
   或导航式下载把凭证放在 URL 里。换用 OAuth/JWT 时只改令牌签发来源，校验逻辑不变。
 
@@ -1360,6 +1388,42 @@ POST /agents
 | `awaiting_permission` | 无 worker 运行，末尾有工具调用等待用户确认（优先级高于 external） |
 | `awaiting_external_result` | 无 worker 运行，末尾有工具调用等待外部执行结果 |
 | `idle` | 无 worker 运行，且无挂起工具调用 |
+
+v2.0.6+ 起，`GET /sessions`（列表）返回的每个 `SessionView` 也直接内联了 `status` 字段，
+前端渲染侧边栏时无需再逐个轮询状态端点。同时该端点的 `is_running` 被标记为 **deprecated**——
+它仅在 worker 持有 run lease 时为 `True`，而 session 停在确认提示上时读作 `False`
+（明明在等用户）；应改用 `status`：
+
+```json
+{
+  "session": { ... },            // 已裁剪：context/summary/tool_context 被清空（见下）
+  "is_running": false,           // deprecated，用 status
+  "status": "awaiting_permission",
+  "team": null
+}
+```
+
+> ⚠️ `GET /sessions` 为减少侧边栏渲染负载，对返回的 `session` 记录做了**裁剪**（v2.0.6+）：
+> `state.context`（模型看到的对话）、`state.summary`（压缩摘要）、`state.tool_context`
+> （缓存了它读过的每个文件）一律清空——否则列出 20 个 session 就要传输 20 份完整记录。
+> `permission_context` / `tasks_context` 因体量小而保留，前端面板可据此初始化。
+> 读取某 session 的消息请走 `GET /sessions/{id}/messages`。
+
+### Session 工作目录（cwd，v2.0.6+）
+
+`SessionConfig.cwd` 记录 session 当前聚焦的目录（绝对路径或相对于 workspace 根的相对路径，
+`None` 表示根）。通过 `PATCH /sessions/{session_id}` 更新（body 的 `cwd` 字段，传 `null` 重置到根、
+省略则保持不变）。
+
+- 它**纯粹是查看锚点**：不改变 `Bash` / `Glob` / `Grep` 的实际执行位置。
+- 写入时不做校验——这个值只是"一个要去查看的地点命名"，路径消失会在真正读取时报错而非阻断修改。
+- 相对值刻意保持相对：workspace 根是后端相关的（LocalBackend 是宿主目录，容器后端是沙箱内固定路径），
+> 只能异步解析，在这里去规范化反而会在 session 跨后端迁移时变陈旧。使用点用
+> `backend.abspath(cwd, cwd=workspace.workdir)` 解析（两种形式都能处理）。
+- 配合 `GET /workspace/status` 读取该 cwd 的 git 状态（见 workspace 端点一节）。
+
+> ⚠️ `PATCH /sessions/{session_id}` 在有 chat run 持有 session 时返回 **409 Conflict**：
+> agent 在 run 开始时一次性快照配置，运行中修改当前 reply 会被忽略，且写入会与 run 自身的状态持久化竞争。
 
 ### 跨用户资源共享（ResourceAccessPolicy，v2.0.4+）
 
