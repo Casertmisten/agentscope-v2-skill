@@ -411,7 +411,7 @@ from agentscope.workspace import WorkspaceBase, Offloader
 
 工作区提供：
 - **工具** — 内置工具（Bash/Read/Write/Edit/Glob/Grep）
-- **MCP** — 动态管理 MCP 服务器
+- **MCP** — 动态管理 MCP 服务器（v2.0.6+ 起按 agent+session 隔离，见下文「MCP 隔离与生命周期」）
 - **Skill** — 动态加载/卸载技能
 - **Offload** — 持久化压缩上下文和工具结果
 
@@ -425,6 +425,7 @@ workspace = LocalWorkspace(
     workspace_id=None,                 # 可选，默认自动生成
     default_mcps=[mcp_client],         # 初始 MCP（仅首次生效）
     skill_paths=["/path/to/skills"],   # 初始技能目录（v2.0.5+ 支持 ~/path 展开）
+    max_live_stateful_mcps=None,       # 可选，并发 live stateful MCP 上限（v2.0.6+）
     instructions="自定义指令模板",       # 支持 {workdir} 占位符
 )
 ```
@@ -437,10 +438,10 @@ workspace = LocalWorkspace(
 
 ```
 {workdir}/
-├── .mcp          # MCP 配置（JSON 数组）
+├── .mcp          # MCP 配置（v2.0.6+ 起 per agent/session，schema 见下）
 ├── data/         # 卸载的多模态文件
 ├── skills/       # 技能子目录
-└── sessions/     # 会话上下文和工具结果
+└── sessions/     # 会话上下文和工具结果（按 session_id 分目录）
 ```
 
 ### DockerWorkspace — Docker 工作区
@@ -678,6 +679,9 @@ app = create_app(..., workspace_manager=ws_manager)
 - 所有 manager 共享同一套 API:`get_workspace(user_id, agent_id, session_id, workspace_id=None)` /
   `close(workspace_id)` / `close_all()`,调用方无需关心后端类型。
 - `__aenter__` 启动后台 sweeper,`__aexit__` 停止 sweeper 并 `close_all()`。
+- `PER_AGENT` 下同一 agent 的多个 session 复用同一 workspace 实例，但 MCP 仍按 session 隔离
+  （见「MCP 隔离与生命周期」）；session 删除时由 `SessionService` 调 `purge_session` 清理其状态，
+  不影响其他 session。
 
 Daytona 部署示例(托管或自托管,`api_url` 留空用 SDK 默认):
 
@@ -748,9 +752,9 @@ await workspace.reset()
 ### 动态管理
 
 ```python
-# 添加/移除 MCP
-await workspace.add_mcp(new_mcp_client)
-await workspace.remove_mcp("weather")
+# 添加/移除 MCP（agent_id/session_id 为仅关键字参数，默认 "" 即旧版遗留 id）
+await workspace.add_mcp(new_mcp_client, agent_id=agent_id, session_id=session_id)
+await workspace.remove_mcp("weather", agent_id=agent_id, session_id=session_id)
 
 # 添加/移除 Skill
 await workspace.add_skill("/path/to/skill/dir")
@@ -758,10 +762,58 @@ await workspace.remove_skill("skill-name")
 
 # 查询
 tools = await workspace.list_tools()     # 内置工具列表
-mcps = await workspace.list_mcps()       # MCP 客户端列表
+mcps = await workspace.list_mcps(        # 该 agent/session 的 MCP 客户端列表
+    agent_id=agent_id, session_id=session_id,
+)
 skills = await workspace.list_skills()   # Skill 列表
 instructions = await workspace.get_instructions()  # 系统提示片段
 ```
+
+### MCP 隔离与生命周期（v2.0.6+）
+
+同一 workspace 可被多个 agent/session 共享（尤其 `PER_AGENT` 隔离下，同一 agent 的多个 session
+共用一个 workspace 实例），但 **MCP 的声明和 live 实例按 `(agent_id, session_id)` 隔离**，
+互不串扰：
+
+- **延迟实例化 + 私有实例**：MCP 只在某 session 第一次调用 `list_mcps` 时才连接，
+  每个 session 拿到独立实例——有状态 MCP（浏览器 cookie、登录态）不会跨 agent/session 泄漏。
+  实例被 LRU 淘汰后，下次 `list_mcps` 会按声明顺序重建。
+- **声明继承**：未自行增删过 MCP 的 session 会从 `default_mcps` 拷贝一份副本；
+  显式清空的 session 记为 `[]`（这是有意义的状态，会持久化进 `.mcp`）。
+- **`agent_id` / `session_id` 仅关键字参数**：因两者都是普通字符串，强制关键字传参以防
+  位置参数误命中另一个 session。`None` 等价于遗留的空串 `""`。
+
+`.mcp` 文件 schema 升到 **v2**：
+
+```jsonc
+{
+  "version": 2,
+  "mcps": {
+    "<agent_id>": { "<session_id>": [ /* MCPClient 配置 */ ] }
+  }
+}
+```
+
+- v1 文件（裸 JSON 数组）启动时自动迁移到 `("", "")` 遗留 id 下，下次写入即升级为 v2。
+- 文件损坏或不可读时回退到 `default_mcps`，不阻断启动。
+
+**LRU 容量管理**：`max_live_stateful_mcps`（构造参数，默认 `max(40, 2 * <stateful defaults>)`）
+限制并发存活的 **stateful** MCP 实例总数（stateless 不占名额，无连接可回收）。超出时按
+`_mcp_last_used` 时间戳 LRU 淘汰**其他** agent/session 的实例；发起方自身的集合永不被淘汰，
+因此总能拿到完整默认集。
+
+**`purge_session`**（基类方法）：删除 session 时由 `SessionService.delete_session` 调用，
+关闭该 session 的 MCP 实例、清除其 `.mcp` 声明、删除其 `sessions/{session_id}/` offload 目录：
+
+```python
+await workspace.purge_session(agent_id=agent_id, session_id=session_id)
+```
+
+- best-effort——任何失败只记日志、不抛异常，因此 workspace 后端不可达也不会回滚已提交的删除。
+- 逐个移除 MCP 不等价：清空的 session 会持久化为 `[]`，会永远留在 `.mcp` 里。
+
+> 服务化路由的 MCP 端点（`/workspace/mcp/...`）已自动带 `agent_id`/`session_id`；
+> `add_mcp` 重名时返回 **HTTP 409 Conflict**。
 
 ### 与 Agent 集成
 
