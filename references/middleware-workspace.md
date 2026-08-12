@@ -440,7 +440,7 @@ workspace = LocalWorkspace(
 {workdir}/
 ├── .mcp          # MCP 配置（v2.0.6+ 起 per agent/session，schema 见下）
 ├── data/         # 卸载的多模态文件
-├── skills/       # 技能子目录
+├── skills/       # .seed 模板 + 每个 agent 一个分区（v2.0.6+，见「Skill 隔离与生命周期」）
 └── sessions/     # 会话上下文和工具结果（按 session_id 分目录）
 ```
 
@@ -756,16 +756,16 @@ await workspace.reset()
 await workspace.add_mcp(new_mcp_client, agent_id=agent_id, session_id=session_id)
 await workspace.remove_mcp("weather", agent_id=agent_id, session_id=session_id)
 
-# 添加/移除 Skill
-await workspace.add_skill("/path/to/skill/dir")
-await workspace.remove_skill("skill-name")
+# 添加/移除 Skill（agent_id 仅关键字参数，默认 None → 默认分区，v2.0.6+）
+await workspace.add_skill("/path/to/skill/dir", agent_id=agent_id)
+await workspace.remove_skill("skill-name", agent_id=agent_id)
 
 # 查询
 tools = await workspace.list_tools()     # 内置工具列表
 mcps = await workspace.list_mcps(        # 该 agent/session 的 MCP 客户端列表
     agent_id=agent_id, session_id=session_id,
 )
-skills = await workspace.list_skills()   # Skill 列表
+skills = await workspace.list_skills(agent_id=agent_id)   # 该 agent 的 Skill 列表
 instructions = await workspace.get_instructions()  # 系统提示片段
 ```
 
@@ -814,6 +814,40 @@ await workspace.purge_session(agent_id=agent_id, session_id=session_id)
 
 > 服务化路由的 MCP 端点（`/workspace/mcp/...`）已自动带 `agent_id`/`session_id`；
 > `add_mcp` 重名时返回 **HTTP 409 Conflict**。
+
+### Skill 隔离与生命周期（v2.0.6+）
+
+Skill 可被 agent 原地编辑（改进自己的技能），因此与 MCP 一样需要隔离——**每个 agent 拥有独立的
+skill 分区** `skills/<agent_id>/`，一个 agent 对技能的增删改不会落到另一个 agent 身上：
+
+```
+skills/
+├── .seed/          # 模板：skill_paths 初始写入处，每个 agent 首次出现时从此复制出自己的分区
+├── <agent_id_1>/   # agent_1 的技能分区（含 .index 哈希索引）
+├── <agent_id_2>/   # agent_2 的技能分区
+└── default/        # 无 agent（纯 SDK 调用）时使用的默认分区
+```
+
+- **惰性装备（equip）**：agent 第一次调用 `list_skills`/`add_skill` 时才把自己的分区从 `skills/.seed`
+  复制出来。分区一旦存在即为"已装备"标记——agent 之后删掉的 seed 技能不会再次出现（与 MCP 的
+  `default_mcps` 同一套规则）。
+- **`agent_id` 仅关键字参数**：`list_skills` / `add_skill` / `add_skill_archive` / `remove_skill` 均接受
+  `agent_id`，`None` 映射到 `default` 分区（SDK 无 agent 直接驱动 workspace 的场景）。
+- **`skill_paths` 是种子而非安装目标**：构造参数 `skill_paths` 只在首次 `initialize` 时打进 `.seed` 模板，
+  随后每个 agent 各自从 `.seed` 装备——沙箱只需上传一次而非每个 agent 一次。
+- **索引文件**：`LocalWorkspace` 在每个分区下用 `.index`（旧版 `.skills`）做哈希索引，按分区 mtime
+  检测人工增删并自动对账。
+- **布局迁移**：升级时若存在旧版扁平 `skills/` 布局，`initialize` 会自动把这些技能搬进 `.seed`
+  模板（幂等，已迁移的目录只含分区、无操作）。
+
+**`purge_agent`**（基类方法）：删除 agent 时由 `SessionService.delete_agent` 调用，best-effort 删除该
+agent 的整个 skill 分区（MCP 声明按 session 维度，由 `purge_session` 随各 session 删除清理）：
+
+```python
+await workspace.purge_agent(agent_id=agent_id)
+```
+
+> 服务化路由的 Skill 端点（`/workspace/skills/...`）已自动带 `agent_id`。
 
 ### 与 Agent 集成
 

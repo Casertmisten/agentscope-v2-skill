@@ -20,7 +20,7 @@ BlobStore / 内嵌或独立索引 worker / MessageBus 消息总线：
 RedisMessageBus / InMemoryMessageBus / Session Status 端点（含 list_sessions 内联 status + 裁剪 context） /
 AsyncSQLAlchemyStorage 持久化 / /health 健康检查端点 / workspace 文件读取与状态端点（WorkspaceService +
 DirectoryListing + WorkspaceStatus/GitStatus + session cwd 工作目录）/ extra_agent_middlewares 工厂 workspace 参数 /
-Anthropic thinking_mode 推理控制 / Channel IM 频道接入飞书与 Discord）、Agent 中断（UserInterruptEvent）、
+Anthropic thinking_mode 推理控制 / Channel IM 频道接入飞书与 Discord / Skill 按 agent 分区隔离）Agent 中断（UserInterruptEvent）、
 回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR）、跨用户资源共享（ResourceAccessPolicy 抽象）、
 Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 workspace）、set_id_factory 全局 ID 工厂等。
 ---
@@ -65,6 +65,8 @@ BackendBase 抽象对外导出 `DirEntry`（v2.0.6+）、
 Anthropic 新增 `thinking_mode` / `thinking_display` / `reasoning_effort` 推理控制参数（v2.0.6+）、
 Channel IM 频道（接入飞书 / Discord，ChannelBase 适配器 + ChannelGateway 入站路由 +
 ChannelLifecycleDispatcher 出站转发 + 确定性派生会话 + 交互卡片权限审批，v2.0.6+）、
+Skill 按 agent 隔离（`skills/.seed` 模板 + 每 agent 一个分区，惰性装备、原地可编辑、删除 agent 时
+`purge_agent` 清理，`list/add/remove_skill` 带 `agent_id`，v2.0.6+）、
 Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
