@@ -22,7 +22,8 @@ AsyncSQLAlchemyStorage 持久化 / /health 健康检查端点 / workspace 文件
 DirectoryListing + WorkspaceStatus/GitStatus + session cwd 工作目录）/ extra_agent_middlewares 工厂 workspace 参数 /
 Anthropic thinking_mode 推理控制 / Channel IM 频道接入飞书与 Discord / Skill 按 agent 分区隔离）Agent 中断（UserInterruptEvent）、
 回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR）、跨用户资源共享（ResourceAccessPolicy 抽象）、
-Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 workspace）、set_id_factory 全局 ID 工厂等。
+Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 workspace）、
+终端控制台 console（launch_console 交互式终端对话调试 / ConsoleRenderer 事件流渲染，内置 HITL 工具确认与 Ctrl+C 中断）、set_id_factory 全局 ID 工厂等。
 ---
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
@@ -67,6 +68,8 @@ Channel IM 频道（接入飞书 / Discord，ChannelBase 适配器 + ChannelGate
 ChannelLifecycleDispatcher 出站转发 + 确定性派生会话 + 交互卡片权限审批，v2.0.6+）、
 Skill 按 agent 隔离（`skills/.seed` 模板 + 每 agent 一个分区，惰性装备、原地可编辑、删除 agent 时
 `purge_agent` 清理，`list/add/remove_skill` 带 `agent_id`，v2.0.6+）、
+终端控制台 console（`launch_console` 交互式终端对话：自动渲染流式回复、处理工具调用 y/n 确认、Ctrl+C 中断当前 reply；
+`ConsoleRenderer` 被动事件渲染器，可嵌入自定义循环消费 `reply_stream`；试运行 / 调试首选入口，无 session 与持久化）、
 Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
@@ -153,6 +156,7 @@ asyncio.run(main())
 | 集成 MCP | [references/tools.md](references/tools.md) |
 | 管理状态 (AgentState) | [references/state.md](references/state.md) |
 | Agent 配置和事件（含结构化输出 / 运行时状态注入 / 错误上报） | [references/agent-events.md](references/agent-events.md) |
+| 终端控制台（launch_console 交互调试 / ConsoleRenderer 事件渲染） | [references/agent-events.md](references/agent-events.md) |
 | 权限和工具组（含 on_check_permission hook） | [references/permissions.md](references/permissions.md) |
 | RAG 知识库（KnowledgeBase / ElasticsearchStore / RAGMiddleware） | [references/rag.md](references/rag.md) |
 | 中间件（含 TTS / Tracing / Mem0 / ReMe / AgenticMemory / on_check_permission）和工作区 | [references/middleware-workspace.md](references/middleware-workspace.md) |
@@ -281,6 +285,34 @@ async for event in agent.reply_stream(user_msg):
         case "REQUIRE_EXTERNAL_EXECUTION": ...  # 需要外部执行
         case "REPLY_END": ...             # 结束（finished_reason 可能为 ERROR，含 error: ErrorInfo）
 ```
+
+## 终端控制台 Console
+
+`agentscope.console` 提供两个入口，方便在终端里试运行 / 调试 agent，无需自己写事件渲染逻辑：
+
+```python
+from agentscope.console import launch_console, ConsoleRenderer
+```
+
+**`launch_console`** — 一行启动交互式对话：从 stdin 读输入，自动渲染流式回复，agent 请求确认时提示 `y/n`，`Ctrl+C` 中断当前 reply（再 `Ctrl+C` 或输入 `exit` 退出）。无 session 管理、无持久化，对话仅存于 `agent.state`，随进程结束：
+
+```python
+agent = Agent(name="Friday", system_prompt="...", model=model, toolkit=toolkit)
+await launch_console(agent)          # 默认 verbosity="default"
+# 参数：user_name（输入提示符）/ verbosity（"quiet"|"default"|"debug"）/ max_tool_result_lines（默认 20）
+```
+
+**`ConsoleRenderer`** — 被动事件渲染器，适合嵌入自己的循环（脚本、测试、自定义 UI）。把 `reply_stream` 的事件一行式输出，并通过 `last_msg` 暴露累积的回复消息：
+
+```python
+renderer = ConsoleRenderer(verbosity="default", max_tool_result_lines=20)
+async for event in agent.reply_stream(user_msg):
+    renderer.render(event)
+print(renderer.last_msg)             # 累积出的 Msg
+```
+
+`verbosity`：`"quiet"` 仅回复文本与错误；`"default"` 额外含思考、工具调用/结果、提示块、token 用量、HITL 通知；`"debug"` 再加生命周期等默认不可见事件。详情见
+[references/agent-events.md](references/agent-events.md)。
 
 ## 消息创建
 

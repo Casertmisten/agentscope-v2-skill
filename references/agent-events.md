@@ -305,6 +305,82 @@ await agent.reply(UserInterruptEvent(reply_id="原reply_id"))
 >
 > 服务化场景下，HTTP 端 `POST /sessions/{sid}/interrupt` 会派发 `UserInterruptEvent`。
 
+## 终端控制台 (Console)
+
+`agentscope.console` 模块把上面的事件流消费逻辑封装成开箱即用的终端体验，是试运行 / 调试 agent
+的首选入口。两个公开对象服务于两种场景：
+
+```python
+from agentscope.console import launch_console, ConsoleRenderer
+```
+
+### launch_console — 交互式对话循环
+
+绑定单个 agent 的交互式 chat 循环：从 stdin 读取用户输入，调用 `agent.reply_stream`，
+逐个渲染事件；遇到 `RequireUserConfirmEvent` 时在终端提示 `y/n`（工具带建议规则时还可选
+`a`lways，会一并接受规则、本进程内不再重复询问）；流式回复过程中按 `Ctrl+C` 中断当前 reply
+（agent 自行关闭 pending tool call、emit 中断事件，只要 `interruption_raise_cancelled_error`
+保持默认 `False`）。输入 `exit`/`quit` 或 `Ctrl+D` 退出。
+
+```python
+async def main() -> None:
+    agent = Agent(name="Friday", system_prompt="...", model=model, toolkit=toolkit)
+    await launch_console(agent)
+
+
+asyncio.run(main())
+```
+
+签名：
+
+```python
+await launch_console(
+    agent: Agent,
+    user_name: str = "user",            # 用户消息 name，兼作输入提示符
+    verbosity: Verbosity = "default",   # "quiet" | "default" | "debug"
+    max_tool_result_lines: int | None = 20,  # 打印工具结果时的截断行数；None 不截断
+) -> None
+```
+
+要点：
+- **无 session 管理、无持久化**：对话只存在 `agent.state`，随进程结束而结束。只是一个轻量
+  try-out / debugging 入口，不替代服务化方案。
+- HITL 确认循环内部由 `launch_console` 驱动：一次 `_run_reply` 若返回 pending 事件，就接着
+  `_confirm` 读 stdin，再把 `UserConfirmResultEvent` 回灌进下一轮 `reply_stream`；若确认阶段
+  `Ctrl+C`/`Ctrl+D`，则发 `UserInterruptEvent` 中止该 parked reply，让下一次输入干净开始。
+
+### ConsoleRenderer — 被动事件渲染器
+
+如果你自己拥有循环（脚本、agent 管线、测试、自定义 UI），用 `ConsoleRenderer` 把
+`reply_stream` 渲染成行式输出即可，不必走 `launch_console` 的 stdin 交互：
+
+```python
+renderer = ConsoleRenderer(
+    verbosity="default",
+    max_tool_result_lines=20,
+    console=None,            # rich Console；不传则新建一个输出到 stdout 的
+)
+async for event in agent.reply_stream(user_msg):
+    renderer.render(event)
+
+msg = renderer.last_msg      # 从事件累积出的回复 Msg（或 None）
+```
+
+行为细节：
+- **文本 / 思考增量**逐 delta 流式打印；**工具调用 / 结果**通过 `Msg.append_event` 缓冲，在各自的
+  `*EndEvent` 上整块打印（`max_tool_result_lines` 截断工具结果）。
+- **未知事件类型被静默跳过**（`debug` 下打印一行 dim 提示），因此后续新增事件类型不会破坏渲染器。
+- `verbosity` 三档：
+  - `"quiet"`：仅流式回复文本与错误。
+  - `"default"`：额外含思考、工具调用/结果、提示块（HintBlock）、token 用量、HITL 通知、
+    超过最大迭代提示等。
+  - `"debug"`：再加生命周期事件（reply/model-call 起止）等默认不可见事件。
+- 底层基于 `rich`（`pyproject.toml` 已将其列为依赖）。工具调用/结果渲染带状态图标：
+  `✓` success / `✗` error / `⊘` denied / `⚠` interrupted / `…` running。
+
+> `launch_console` 内部就是用 `ConsoleRenderer` + stdin 确认 + 信号处理组装出来的，
+> 因此两者的 `verbosity` / `max_tool_result_lines` 语义完全一致。
+
 ## 结构化输出（v2.0.5+）
 
 `reply` / `reply_stream` 新增 `structured_schema: Type[BaseModel] | None` 参数。传入 Pydantic
