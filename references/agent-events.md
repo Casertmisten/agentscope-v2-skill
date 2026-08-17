@@ -144,7 +144,7 @@ context_config = ContextConfig(
 | `ToolResultTextDeltaEvent` | 工具结果文本增量 |
 | `ToolResultDataDeltaEvent` | 工具结果数据增量 |
 | `ToolResultEndEvent` | 工具结果结束（含 state） |
-| `ExceedMaxItersEvent` | 超过最大迭代次数 |
+| `ExceedMaxItersEvent` | 超过最大迭代次数（v2.0.6+ 已 deprecated，仅为兼容仍发出；改用 `ReplyEndEvent.finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS`） |
 | `RequireUserConfirmEvent` | 需要用户确认（含 tool_calls 列表） |
 | `RequireExternalExecutionEvent` | 需要外部执行（含 tool_calls） |
 | `UserConfirmResultEvent` | 用户确认结果（用于继续回复） |
@@ -296,6 +296,12 @@ await agent.reply(UserInterruptEvent(reply_id="原reply_id"))
 >
 > v2.0.6+：`ChatResponse.finished_reason` 字段改为 `default_factory`，修复被中断的响应其 `interrupted`
 > reason 被错误重置为 `completed` 的问题。
+>
+> v2.0.6+：`ExceedMaxItersEvent` 已 deprecated（仍向后兼容发出）：判断超限请检查
+> `ReplyEndEvent.finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS`。超限时
+> exit_events 会同时包含兼容用的 `ExceedMaxItersEvent` 与带 `exceed_max_iters` reason 的
+> `ReplyEndEvent`；`on_reply` 中间件可吞掉后者续跑（见
+> [middleware-workspace.md](middleware-workspace.md)）。
 
 > 注意区分两类「中断」：
 > - **parked reply 的中断**：用 `UserInterruptEvent`（本文所述），针对等待 HITL/外部结果的 reply。

@@ -278,6 +278,10 @@ tool = await client.get_tool(name)  # 获取单个 MCPTool
 raw = await client.list_raw_tools() # 获取原始 mcp.types.Tool
 ```
 
+> v2.0.6+：有状态客户端支持重连——`connect() → close() → connect()` 会重建底层 transport
+> （stdio / streamable HTTP / SSE 均为一次性 context manager，每次连接前重建），断线后可复用
+> 同一 `MCPClient` 实例重新 `connect()`。
+
 ### 工具过滤
 
 ```python

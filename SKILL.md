@@ -9,7 +9,7 @@ description: |
 MCPClient 集成、AgentState 状态管理、Event 事件系统、Permission 权限、ToolGroup、Skill 技能系统、
 Middleware 中间件（含 TTSMiddleware / ReplyBudgetControlMiddleware / TracingMiddleware / Mem0Middleware 跨会话长期记忆 /
 ReMeMiddleware 内嵌 ReMe 长期记忆 / AgenticMemoryMiddleware 文件系统长期记忆 / RAGMiddleware 检索增强，及 on_check_permission
-权限检查洋葱 hook）、Agent 结构化输出（structured_schema Pydantic 模型）、运行时状态注入（时间/任务/上下文压缩感知）、
+权限检查洋葱 hook、on_reply 吞 ReplyEndEvent 续跑回复循环）、Agent 结构化输出（structured_schema Pydantic 模型）、运行时状态注入（时间/任务/上下文压缩感知）、
 Workspace 工作区（八种 Workspace 均支持内置工具，Backend 抽象：LocalBackend / DockerBackend / E2BBackend /
 K8sBackend / OpenSandboxBackend / DaytonaBackend / AppleContainerBackend / BubblewrapBackend）、Embedding/TTS 多模态模型
 （Embedding v2.0.3 重构为泛型基类，dimensions 必填 + FileEmbeddingCache 文件缓存；TTS 含 OpenAITTSModel /
@@ -70,6 +70,9 @@ Skill 按 agent 隔离（`skills/.seed` 模板 + 每 agent 一个分区，惰性
 `purge_agent` 清理，`list/add/remove_skill` 带 `agent_id`，v2.0.6+）、
 终端控制台 console（`launch_console` 交互式终端对话：自动渲染流式回复、处理工具调用 y/n 确认、Ctrl+C 中断当前 reply；
 `ConsoleRenderer` 被动事件渲染器，可嵌入自定义循环消费 `reply_stream`；试运行 / 调试首选入口，无 session 与持久化）、
+on_reply 中间件可吞掉 `ReplyEndEvent` 续跑回复循环（v2.0.6+，最终 `Msg` 仅在事件逃出中间件链后产生；
+`ExceedMaxItersEvent` 同步 deprecated，改查 `ReplyEndEvent.finished_reason`）、
+MCP 有状态客户端支持 close 后重连（v2.0.6+）、
 Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
@@ -280,7 +283,7 @@ async for event in agent.reply_stream(user_msg):
         case "TOOL_RESULT_DATA_DELTA": ...# 工具结果数据增量
         case "TOOL_RESULT_END": ...       # 工具执行结束
         case "MODEL_CALL_END": ...        # 模型调用结束（含 token 用量）
-        case "EXCEED_MAX_ITERS": ...      # 超过最大迭代次数
+        case "EXCEED_MAX_ITERS": ...      # 超过最大迭代次数（v2.0.6+ deprecated，改查 REPLY_END 的 finished_reason）
         case "REQUIRE_USER_CONFIRM": ...  # 需要用户确认
         case "REQUIRE_EXTERNAL_EXECUTION": ...  # 需要外部执行
         case "REPLY_END": ...             # 结束（finished_reason 可能为 ERROR，含 error: ErrorInfo）

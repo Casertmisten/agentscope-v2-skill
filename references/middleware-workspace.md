@@ -80,7 +80,7 @@ agentic = AgenticMemoryMiddleware(workdir="./workspace")
 
 | 拦截点 | 模式 | 说明 |
 |---|---|---|
-| `on_reply` | 洋葱模型 | 拦截整个 reply 过程 |
+| `on_reply` | 洋葱模型 | 拦截整个 reply 过程（v2.0.6+ 可吞掉 `ReplyEndEvent` 续跑，见下文） |
 | `on_reasoning` | 洋葱模型 | 拦截推理/模型调用阶段 |
 | `on_check_permission`（v2.0.5+） | 洋葱模型 | 拦截单次工具调用的权限检查 |
 | `on_acting` | 洋葱模型 | 拦截单个工具执行 |
@@ -142,6 +142,37 @@ input_kwargs = {
 # on_compress_context
 input_kwargs = {"context_config": ContextConfig | None, "instructions": HintBlock | None}
 ```
+
+### on_reply 吞掉 ReplyEndEvent 续跑回复循环（v2.0.6+）
+
+`on_reply` 中间件**收到 `ReplyEndEvent` 后不 yield（吞掉）**，可强制 Agent 在同一次
+reply 内再跑一轮 reasoning-acting；最终的 `Msg` 只在该事件逃出整个中间件链后才产生。
+典型用途：自定义「多轮追问 / 输出不合格再答一次」等收尾策略，无需改动 ReAct 循环本身：
+
+```python
+from agentscope.event import ReplyEndEvent
+from agentscope.middleware import MiddlewareBase
+
+class SwallowOnceMiddleware(MiddlewareBase):
+    """吞掉第一个 ReplyEndEvent，迫使 agent 再答一轮。"""
+
+    def __init__(self):
+        self.swallowed = False
+
+    async def on_reply(self, agent, input_kwargs, next_handler):
+        async for item in next_handler():
+            if isinstance(item, ReplyEndEvent) and not self.swallowed:
+                self.swallowed = True
+                continue    # 不 yield 即吞掉，进入下一轮 reasoning-acting
+            yield item
+```
+
+约束（违反会抛 `RuntimeError` 或被忽略）：
+- **连续吞掉且无进展是忙循环**：两次吞 `ReplyEndEvent` 之间必须发生过 reasoning/acting，
+  否则 Agent 抛 `RuntimeError`。吞掉一个 exceed-max-iters 结束前，需先解除下一轮阻塞
+  （如调整 `agent.state.cur_iter`、`ReActConfig.max_iters` 或结构化输出状态）。
+- **HITL 挂起与中断的结束不可吞**：parked（等待用户确认/外部执行，无 exit_events）与
+  `interrupted` 的结束不走续跑协议，吞掉无效。
 
 ### on_check_permission — 权限检查洋葱 hook（v2.0.5+）
 
