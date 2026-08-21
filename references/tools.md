@@ -92,6 +92,9 @@ toolkit = Toolkit(tools=[FunctionTool(add_numbers)])
 - 支持同步/异步函数，返回 `ToolChunk`（非流式）或 `AsyncGenerator[ToolChunk]`/`Generator[ToolChunk]`（流式）。
 - 也可以直接返回 `str`、`dict`、列表等普通对象，`FunctionTool` 会自动转换成文本 `ToolChunk`。
 - `FunctionTool(func, name=..., description=..., is_concurrency_safe=True, is_read_only=False, ...)` 可覆盖默认属性。
+- v2.0.7+ 支持传入 `input_schema` 覆盖自动生成的 schema：JSON schema dict 或 pydantic `BaseModel` 子类
+  （经 `model_json_schema()` 转换并移除 `title` 字段）；为 `None`（默认）时仍从函数签名/docstring 生成，
+  约束（枚举、取值范围等）用 `typing.Literal` 或 `typing.Annotated[int, Field(ge=0, le=10)]` 表达。
 
 **方式 2：继承 ToolBase — 需要权限检查/状态注入等高级能力**
 

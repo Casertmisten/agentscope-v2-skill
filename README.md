@@ -4,23 +4,23 @@
 
 > Claude Code Skill：AgentScope 2.0 多智能体框架开发指南
 
-![version](https://img.shields.io/badge/AgentScope-v2.0.6-blue)
+![version](https://img.shields.io/badge/AgentScope-v2.0.7-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
 ## 简介
 
-这是一个 [Claude Code](https://claude.ai/code) 的 Skill 插件，为 [AgentScope 2.0](https://github.com/agentscope-ai/agentscope)（`agentscope-ai`）提供全面的开发参考。安装后，Claude Code 在处理 AgentScope 相关任务时会自动加载此技能，获得 v2 API 的准确知识。文档持续跟随上游源码同步，当前对应 **v2.0.6**。
+这是一个 [Claude Code](https://claude.ai/code) 的 Skill 插件，为 [AgentScope 2.0](https://github.com/agentscope-ai/agentscope)（`agentscope-ai`）提供全面的开发参考。安装后，Claude Code 在处理 AgentScope 相关任务时会自动加载此技能，获得 v2 API 的准确知识。文档持续跟随上游源码同步，当前对应 **v2.0.7**（跟随 main 分支，覆盖 v2.0.6 起的后续变更）。
 
 ⚠️ **注意**：AgentScope 2.0 与旧版 `modelscope/agentscope`（v1.x）的 API 完全不同，不兼容。
 
 ## 涵盖内容
 
-- **Agent 创建**：单一 `Agent` 类，`reply()` 返回异步事件流
+- **Agent 创建**：单一 `Agent` 类，`reply()` 返回异步事件流；`ReActConfig.max_iters` 默认 50（v2.0.7+，此前 20）
 - **Credential 体系**：OpenAI / Anthropic / DashScope / Gemini / Ollama 认证
 - **Model 配置**：ChatModelBase、重试、fallback、Omni 模型音频输出、`extra_body` 透传（v2.0.3+）、Anthropic 推理控制（`thinking_mode` / `thinking_display` / `reasoning_effort`，v2.0.6+）
 - **Embedding / TTS**（v2.0.2+，实验性）：独立的 `embedding`（v2.0.3 重构为泛型基类，dimensions 必填 + 多模态路由） / `tts` 模块，Credential 统一暴露多模态能力；TTS 含 `OpenAITTSModel`（v2.0.4+）/ DashScope `CosyVoice`（同一类支持普通/实时）/ `DashScopeRealtimeTTSModel` / `GeminiTTSModel`（v2.0.5+）
-- **RAG 知识库**（v2.0.3+）：`agentscope.rag` 模块（`KnowledgeBase` 句柄 + `QdrantStore` / `MilvusLiteStore` / `MongoDBStore`（均为 v2.0.4+）/ `ElasticsearchStore`（v2.0.5+）向量库 + Parser/Chunker 索引管线，Parser 含 Text/PDF/PPT/Image + `WordParser`/`ExcelParser`（v2.0.4+）），`RAGMiddleware` 提供 static（自动注入）与 agentic（工具驱动）两种检索模式
-- **Toolkit / ToolBase**：工具注册、内置工具（Bash, Read, Write 等；Windows 下 `PowerShell`，v2.0.5+）、`ToolMiddlewareBase` 工具级洋葱中间件（v2.0.3+）
+- **RAG 知识库**（v2.0.3+）：`agentscope.rag` 模块（`KnowledgeBase` 句柄 + `QdrantStore` / `MilvusLiteStore` / `MongoDBStore`（均为 v2.0.4+）/ `ElasticsearchStore`（v2.0.5+）向量库 + Parser/Chunker 索引管线，Parser 含 Text/PDF/PPT/Image + `WordParser`/`ExcelParser`（v2.0.4+）；`list_documents`/`list_chunks` 文档与分块浏览（v2.0.7+）），`RAGMiddleware` 提供 static（自动注入）与 agentic（工具驱动）两种检索模式
+- **Toolkit / ToolBase**：工具注册、内置工具（Bash, Read, Write 等；Windows 下 `PowerShell`，v2.0.5+）、`FunctionTool` 自定义 `input_schema`（JSON schema / pydantic BaseModel，v2.0.7+）、`ToolMiddlewareBase` 工具级洋葱中间件（v2.0.3+）
 - **MCPClient**：StdIO / 有状态 HTTP / 无状态 HTTP 连接，有状态客户端支持 close 后重连（v2.0.6+）
 - **AgentState**：上下文、摘要、会话、权限、任务管理
 - **事件系统**：`REPLY_START` → `TEXT_BLOCK_DELTA` → `TOOL_CALL_*` → `REPLY_END`，含 `DATA_BLOCK_*` 音频流、Agent 中断（`UserInterruptEvent`，v2.0.4+）、回复错误上报（`ErrorType` 分类 + `ReplyFinishedReason.ERROR`，v2.0.5+）、`ExceedMaxItersEvent` deprecated 改查 `ReplyEndEvent.finished_reason`（v2.0.6+）

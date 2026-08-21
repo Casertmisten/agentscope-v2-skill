@@ -85,7 +85,7 @@ await agent.compress_context(instructions=HintBlock(hint="保留 API 迁移决�
 
 ```python
 react_config = ReActConfig(
-    max_iters=20,            # 推理-行动最大迭代次数
+    max_iters=50,            # 推理-行动最大迭代次数（v2.0.7+ 默认 50，此前为 20）
     stop_on_reject=False,    # 工具被拒绝时是否停止
     interruption_message="I notice the interruption. How can I help you?",
     # 中断事件触发后，agent 回退并产出的替代文案（见下文「Agent 中断」）

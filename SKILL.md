@@ -28,7 +28,7 @@ Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 wo
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
 
-AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.6`。
+AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.7`（main 分支，含 v2.0.6 之后的变更）。
 
 **核心特性**：事件驱动架构、权限系统（含 on_check_permission 中间件 hook、批量确认豁免、
 DEFAULT/DONT_ASK 只读快路径）、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
@@ -229,7 +229,7 @@ agent = Agent(
         tool_result_limit=50000,        # 工具结果 token 上限，默认 50000
     ),
     react_config=ReActConfig(           # ReAct 循环配置
-        max_iters=20,
+        max_iters=50,                   # 最大迭代次数（v2.0.7+ 默认 50，此前为 20）
         stop_on_reject=False,
     ),
     model_config=ModelConfig(           # 模型重试配置

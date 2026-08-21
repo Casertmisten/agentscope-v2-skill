@@ -4,23 +4,23 @@
 
 > Claude Code Skill: Development guide for the AgentScope 2.0 multi-agent framework
 
-![version](https://img.shields.io/badge/AgentScope-v2.0.6-blue)
+![version](https://img.shields.io/badge/AgentScope-v2.0.7-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
 ## Overview
 
-This is a [Claude Code](https://claude.ai/code) Skill plugin that provides comprehensive development reference for [AgentScope 2.0](https://github.com/agentscope-ai/agentscope) (`agentscope-ai`). Once installed, Claude Code automatically activates this skill when handling AgentScope-related tasks, ensuring accurate v2 API knowledge. Docs are continuously synced with upstream source, currently aligned with **v2.0.6**.
+This is a [Claude Code](https://claude.ai/code) Skill plugin that provides comprehensive development reference for [AgentScope 2.0](https://github.com/agentscope-ai/agentscope) (`agentscope-ai`). Once installed, Claude Code automatically activates this skill when handling AgentScope-related tasks, ensuring accurate v2 API knowledge. Docs are continuously synced with upstream source, currently aligned with **v2.0.7** (tracking main; includes post-v2.0.6 changes).
 
 ⚠️ **Note**: AgentScope 2.0 has a completely different, incompatible API from the legacy `modelscope/agentscope` (v1.x).
 
 ## Coverage
 
-- **Agent Creation**: Single `Agent` class, `reply()` returns an async event stream
+- **Agent Creation**: Single `Agent` class, `reply()` returns an async event stream; `ReActConfig.max_iters` defaults to 50 (v2.0.7+, previously 20)
 - **Credential System**: OpenAI / Anthropic / DashScope / Gemini / Ollama authentication
 - **Model Configuration**: ChatModelBase, retries, fallback, omni model audio output, `extra_body` passthrough (v2.0.3+), Anthropic reasoning controls (`thinking_mode` / `thinking_display` / `reasoning_effort`, v2.0.6+)
 - **Embedding / TTS** (v2.0.2+, experimental): dedicated `embedding` (refactored to generic base in v2.0.3, dimensions required + multimodal routing) / `tts` modules; Credential exposes multimodal capabilities; TTS includes `OpenAITTSModel` (v2.0.4+) / DashScope `CosyVoice` (one class for both normal and realtime) / `DashScopeRealtimeTTSModel` / `GeminiTTSModel` (v2.0.5+)
-- **RAG Knowledge Base** (v2.0.3+): `agentscope.rag` module (`KnowledgeBase` handle + `QdrantStore` / `MilvusLiteStore` / `MongoDBStore` vector stores (latter two v2.0.4+) / `ElasticsearchStore` (v2.0.5+) + Parser/Chunker indexing pipeline, parsers include Text/PDF/PPT/Image + `WordParser`/`ExcelParser` (v2.0.4+)); `RAGMiddleware` offers both static (auto-inject) and agentic (tool-driven) retrieval modes
-- **Toolkit / ToolBase**: Tool registration, built-in tools (Bash, Read, Write, etc.; `PowerShell` on Windows, v2.0.5+), `ToolMiddlewareBase` tool-level onion middleware (v2.0.3+)
+- **RAG Knowledge Base** (v2.0.3+): `agentscope.rag` module (`KnowledgeBase` handle + `QdrantStore` / `MilvusLiteStore` / `MongoDBStore` vector stores (latter two v2.0.4+) / `ElasticsearchStore` (v2.0.5+) + Parser/Chunker indexing pipeline, parsers include Text/PDF/PPT/Image + `WordParser`/`ExcelParser` (v2.0.4+); `list_documents`/`list_chunks` document & chunk browsing (v2.0.7+)); `RAGMiddleware` offers both static (auto-inject) and agentic (tool-driven) retrieval modes
+- **Toolkit / ToolBase**: Tool registration, built-in tools (Bash, Read, Write, etc.; `PowerShell` on Windows, v2.0.5+), `FunctionTool` custom `input_schema` (JSON schema / pydantic BaseModel, v2.0.7+), `ToolMiddlewareBase` tool-level onion middleware (v2.0.3+)
 - **MCPClient**: StdIO / stateful HTTP / stateless HTTP connections; stateful clients support reconnection after close (v2.0.6+)
 - **AgentState**: Context, summary, session, permission, task management
 - **Event System**: `REPLY_START` → `TEXT_BLOCK_DELTA` → `TOOL_CALL_*` → `REPLY_END`, incl. `DATA_BLOCK_*` audio streams, agent interruption (`UserInterruptEvent`, v2.0.4+), reply error reporting (`ErrorType` classification + `ReplyFinishedReason.ERROR`, v2.0.5+), and `ExceedMaxItersEvent` deprecated in favor of `ReplyEndEvent.finished_reason` (v2.0.6+)

@@ -335,7 +335,6 @@ from agentscope.tool import Toolkit
 
 reme_mw = ReMeMiddleware(
     workspace_dir=".reme",          # ReMe vault / workspace
-    config="default",               # ReMe 配置名或路径
     parameters=ReMeMiddleware.Parameters(
         chat_model=my_chat_model,       # 可选：注入给 ReMe 的 LLM 组件
         embedding_model=my_embedding_model,  # 可选：启用/注入向量检索
@@ -361,7 +360,9 @@ await reme_mw.close()
   `AgentState(session_id=...)`。
 - `chat_model` / `embedding_model` 固定在 middleware 构造参数中，适合一个 ReMe app 共享给多个 agent。
 - 静态检索是后台任务，单次非常短的 reply 可能先结束；这种情况下本轮不注入，写回仍会执行。
-- `embedding_model` 为 `None` 时，ReMe 使用自身配置；提供 embedding 时会启用 ReMe 的向量存储接线。
+- `embedding_model` 为 `None` 时，搜索仅按关键词；`chat_model` 为 `None` 时由 AgentScope 内置的
+  最小 ReMe 配置从 ReMe 的 `LLM_*` 环境变量装配 LLM（v2.0.7 起不再接受 `config` 参数，
+  内嵌应用一律使用 AgentScope 自有的精简配置，保留完整记忆生命周期）。
 
 ### AgenticMemoryMiddleware — 文件系统长期记忆（v2.0.4+）
 

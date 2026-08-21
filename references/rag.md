@@ -267,7 +267,7 @@ kb = KnowledgeBase(
 )
 ```
 
-四个方法:
+五个方法:
 
 | 方法 | 作用 |
 |---|---|
@@ -275,6 +275,7 @@ kb = KnowledgeBase(
 | `insert_document(chunks, document_id=None, document_metadata=None)` | 批量 embed 并插入为同一文档,返回 `document_id` |
 | `delete_document(document_id)` | 按文档 id 删除其全部记录 |
 | `list_documents()` | 列出当前知识库内所有文档摘要（返回 `list[DocumentSummary]`） |
+| `list_chunks(document_id, offset=0, limit=30)` | v2.0.7+：按 `chunk_index` 升序列出单个文档的 chunk（分页），受 `metadata_filter` 约束 |
 
 `DocumentSummary` 字段（`from agentscope.rag import DocumentSummary`）：
 `document_id: str` / `source: str` / `chunk_count: int` / `metadata: dict`
@@ -284,6 +285,7 @@ kb = KnowledgeBase(
 - `insert_document` 时 chunk 元数据合并优先级(高者覆盖低者):`metadata_filter` 键(安全边界) > chunk 自身 metadata(解析器写入) > `document_metadata`(文档级,如 filename)。
 - `metadata_filter`(多租户隔离):检索/列出**强制**按该过滤;插入**强制**写入这些键——防止解析器 bug 或恶意内容把记录塞进别的租户作用域。`None`(默认)表示该知识库独占 collection。
 - 检索返回的 `VectorSearchResult`:`score`(相似度,余弦/点积越高越相似,L2 越低越相似)+ `document_id` + `chunk`。
+- `list_chunks` 底层对应 `VectorStoreBase.list_chunks`——特意**非抽象方法**(避免破坏既有第三方子类),未实现的后端抛 `NotImplementedError`;内置 Qdrant/MilvusLite/MongoDB/Elasticsearch 四个后端均已支持。
 
 ### 完整索引 + 检索示例
 
