@@ -108,7 +108,7 @@ model_config = ModelConfig(
 
 ```python
 context_config = ContextConfig(
-    trigger_ratio=0.8,        # token 使用比例阈值（>0, <0.9）
+    trigger_ratio=0.8,        # token 使用比例阈值（>0, ≤0.9，v2.0.7+ 起允许取 0.9）
     reserve_ratio=0.1,        # 压缩后保留比例（>0, <0.9）
     tool_result_limit=50000,   # 工具结果 token 上限，默认 50000
     compression_prompt="...", # 自定义压缩提示
@@ -126,7 +126,7 @@ context_config = ContextConfig(
 | `ReplyStartEvent` | reply 开始（含 session_id, reply_id, name） |
 | `ReplyEndEvent` | reply 结束（含 `finished_reason`；v2.0.5+ 出错时 `finished_reason=ERROR` 且带 `error: ErrorInfo`） |
 | `ModelCallStartEvent` | 模型调用开始（含 model_name） |
-| `ModelCallEndEvent` | 模型调用结束（含 input/output tokens） |
+| `ModelCallEndEvent` | 模型调用结束（含 input/output tokens；v2.0.7+ 另含 `cache_input_tokens` / `cache_creation_input_tokens` 缓存命中统计） |
 | `TextBlockStartEvent` | 文本块开始 |
 | `TextBlockDeltaEvent` | 文本增量（`delta` 字段） |
 | `TextBlockEndEvent` | 文本块结束 |
@@ -193,7 +193,7 @@ async for event in agent.reply_stream(user_msg):
             for tc in event.tool_calls:
                 print(f"需外部执行: {tc.name}")
 
-        # token 用量
+        # token 用量（v2.0.7+ 还可读 cache_input_tokens / cache_creation_input_tokens）
         case "MODEL_CALL_END":
             print(f"tokens: {event.input_tokens}+{event.output_tokens}")
 

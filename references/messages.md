@@ -17,6 +17,9 @@ msg = Msg(
 )
 ```
 
+> `Usage` 在 v2.0.7+ 新增两个缓存统计字段：`cache_input_tokens`（命中提示词缓存的输入
+> token 数）与 `cache_creation_input_tokens`（写入提示词缓存的输入 token 数），均默认 0。
+
 ## 工厂函数（推荐用法）
 
 ```python
@@ -136,4 +139,7 @@ msg.append_event(event)               # 从事件流更新消息（流式场景�
 from agentscope.message import Usage
 
 usage = Usage(input_tokens=100, output_tokens=50)
+# v2.0.7+ 缓存统计（默认 0）：
+#   cache_input_tokens          # 命中提示词缓存的输入 token 数
+#   cache_creation_input_tokens # 写入提示词缓存的输入 token 数
 ```

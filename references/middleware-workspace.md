@@ -930,7 +930,8 @@ app = create_app(
     resource_access_policy=None,           # 跨用户资源共享策略（v2.0.4+）
     mcp_hubs=None,                         # MCP hub 列表（v2.0.5+）
     skill_hubs=None,                       # Skill hub 列表（v2.0.5+）
-    channels=None,                         # Channel 适配器类列表（v2.0.6+，如 [FeishuChannel, DiscordChannel]）
+    channels=None,                         # Channel 适配器类列表（v2.0.6+，如 [DingTalkChannel, FeishuChannel, DiscordChannel]）
+    enable_channel_worker=True,            # 本进程是否持有 channel 长连接（v2.0.7+，多副本部署设 False）
 )
 
 # 独立运行
@@ -1140,7 +1141,7 @@ storage = AsyncSQLAlchemyStorage(
 
 ## Channel — 接入 IM 平台（v2.0.6+）
 
-Channel（频道）把 AgentScope agent 接入即时通讯平台（飞书 / Discord），让 IM 群/私聊里的消息
+Channel（频道）把 AgentScope agent 接入即时通讯平台（钉钉 / 飞书 / Discord），让 IM 群/私聊里的消息
 直接驱动 agent 会话。这是**纯服务化层**功能——只在 `create_app` 启动的 FastAPI 服务里生效，
 SDK 层的 `Agent` / `reply_stream` 本身不变。
 
@@ -1151,22 +1152,28 @@ channel 子系统（路由、生命周期调度、回复转发）；为 `None`�
 
 ```python
 from agentscope.app import create_app
-from agentscope.app.channel import DiscordChannel, FeishuChannel
+from agentscope.app.channel import DingTalkChannel, DiscordChannel, FeishuChannel
 
 app = create_app(
     storage=storage,
     message_bus=message_bus,
     workspace_manager=ws_manager,
-    channels=[DiscordChannel, FeishuChannel],   # v2.0.6+
+    channels=[DingTalkChannel, DiscordChannel, FeishuChannel],   # v2.0.6+
 )
 ```
 
-内置两个适配器：
+内置三个适配器：
 
 | 类 | `channel_type` | 认证字段 | 连接方式 |
 |---|---|---|---|
+| `DingTalkChannel` | `"dingtalk"` | `client_id` + `client_secret` | dingtalk-stream WebSocket 长连接（独立线程，v2.0.7+） |
 | `FeishuChannel` | `"feishu"` | `app_id` + `app_secret` | lark-oapi WebSocket 长连接（独立线程 + 自有 loop） |
 | `DiscordChannel` | `"discord"` | `bot_token` + `application_id` | discord.py gateway WebSocket（跑在 app loop） |
+
+> 钉钉适配器通过 `agentscope[channel]` 安装（含 `dingtalk-stream`）；其 `Config` 支持
+> `only_at_reply` / `show_tool_process` / `show_thinking` / `max_media_bytes`，以及两个
+> 可选卡片模板 id：`approval_card_template_id`（工具审批卡片，配置后 send 类工具才可用）、
+> `streaming_card_template_id`（AI 卡片流式回复，留空则用普通 Markdown）。
 
 ### 数据模型
 
@@ -1238,11 +1245,11 @@ IM 平台 ──消息──▶ Channel(适配器) ──emit──▶ ChannelGa
 ### channel 暴露给 agent 的工具
 
 每个 channel 可通过 `list_tools(workspace)` 暴露平台工具给 agent（例如「给当前对话以外的某个
-群/用户发消息」）。飞书内置 5 个工具，组成发现 → 发送的闭环：
+群/用户发消息」）。飞书与钉钉各内置 5 个工具，组成发现 → 发送的闭环：
 
 | 工具 | 作用 |
 |---|---|
-| `ListChats` / `ListChatMembers` | 发现：返回 `receive_id` + `receive_id_type` |
+| `ListChats` / `ListChatMembers`（飞书）、`ListConversations` / `ListUsers`（钉钉） | 发现：返回目标 id |
 | `SendMessage` / `SendFile` / `SendImage` | 发送：消费 discovery 给出的 id 定向送达 |
 
 > ℹ️ 这些工具由频道实例按需注入到该会话的 workspace，普通 SDK agent 开发者无需手动注册。
@@ -1288,7 +1295,10 @@ class MyChannel(ChannelBase):
 | GET | `/channels/{id}/chat_ids` | 路由配置可用的群（平台列表 ∪ 被动见过 inbound 的） |
 
 > ⚠️ Channel 功能属于服务化部署层，依赖 Redis 或 SQLAlchemy storage + MessageBus。
-> 普通单 agent SDK 开发无需关心。多节点部署时每个节点都会 host 所有启用频道（无分片）。
+> 普通单 agent SDK 开发无需关心。多节点部署时，平台对一个 bot 只给一条事件连接——
+> 多副本直连会浪费连接甚至重复消费消息。默认 `enable_channel_worker=True` 适合桌面/单进程
+> 部署；跑多副本 API 时设 `False`，把长连接交给专用 channel worker 进程持有（v2.0.7+），
+> channel REST API 与 webhook 投递在任一节点都可用，变的只是连接归属。
 
 
 
