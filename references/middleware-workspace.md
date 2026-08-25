@@ -1025,7 +1025,8 @@ bus = InMemoryMessageBus()
 ### 存储后端（Storage）
 
 `create_app` 的 `storage` 参数决定服务化的持久化后端（credentials / agents / sessions / 会话消息 /
-schedules / teams / knowledge bases / knowledge documents 共 8 类记录）。两种实现：
+schedules / teams / knowledge bases / knowledge documents / MCP·Skill 用户库 / channels
+共 11 类记录）。两种实现：
 
 ```python
 from agentscope.app.storage import RedisStorage, AsyncSQLAlchemyStorage
@@ -1047,6 +1048,8 @@ storage = AsyncSQLAlchemyStorage(
   具体 async 驱动（`aiosqlite`/`asyncpg`/`aiomysql` 等）**不在 extra 内**，由用户自装。
 - 通过 `app.storage.__init__` 惰性导入（`__getattr__`），未装 sql extra 不会触发 SQLAlchemy 导入。
 - 表定义刻意只用跨方言子集（plain `JSON`、无 generated column、upsert 按方言分发），兼容主流数据库。
+- 频道记录同样落库（v2.0.7+，`channels` 表 + Alembic 迁移 `0003`）：bot 唯一性用
+  `platform_bot_id` 列上的 UNIQUE 约束保证，与 Redis 后端能力对齐。
 - 附带 Alembic 迁移脚手架（`app/storage/_sql/_alembic/`），`auto_migrate=True` 时自动 `alembic upgrade head`。
 
 > ℹ️ `StorageBase` 是两者的抽象基类，可自行子类化。普通 agent 开发者无需直接操作 storage——
@@ -1294,7 +1297,9 @@ class MyChannel(ChannelBase):
 | GET | `/channels/{id}/sessions` | 该频道派生的会话 |
 | GET | `/channels/{id}/chat_ids` | 路由配置可用的群（平台列表 ∪ 被动见过 inbound 的） |
 
-> ⚠️ Channel 功能属于服务化部署层，依赖 Redis 或 SQLAlchemy storage + MessageBus。
+> ⚠️ Channel 功能属于服务化部署层，依赖 MessageBus + `RedisStorage` 或
+> `AsyncSQLAlchemyStorage`（SQL 后端自 v2.0.7+ 起支持频道记录持久化；storage 与 bus 独立注入，
+> 多节点部署的标准形态是 **SQL storage + Redis bus**）。
 > 普通单 agent SDK 开发无需关心。多节点部署时，平台对一个 bot 只给一条事件连接——
 > 多副本直连会浪费连接甚至重复消费消息。默认 `enable_channel_worker=True` 适合桌面/单进程
 > 部署；跑多副本 API 时设 `False`，把长连接交给专用 channel worker 进程持有（v2.0.7+），
