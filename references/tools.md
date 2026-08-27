@@ -182,6 +182,13 @@ ToolResponse(
 > ℹ️ 流式累积时，`ToolResponse` 的状态按后到的 chunk 更新（`RUNNING` → `SUCCESS`/`INTERRUPTED`/`DENIED`/`ERROR`）。
 > 但 **`ERROR` 是终态优先级最高**：一旦进入 `ERROR`，后续的 `INTERRUPTED` / `DENIED` chunk 不会再覆盖它（v2.0.6+ 修复）。
 
+### 工具结果中的多模态数据
+
+`ToolChunk.content` 中的 `DataBlock`（图片等）由 formatter 自动传递给模型，无需手动转换：
+
+- **模型支持的媒体类型**（由模型 `input_types` 决定）：原样传递。多数 API（OpenAI Chat Completions、Gemini、DashScope、Anthropic 等）会把多模态块提升为一条紧随工具结果的 user 消息（文本中插入带 identifier 的提示）；OpenAI Responses API 则从 v2.0.7 起直接以原生格式放入 `function_call_output` 的 `output`（`image/*`、`application/pdf`），不再产生额外 user 消息。
+- **不支持的媒体类型**：URL 来源在文本中保留 URL 引用；base64 数据自动写入临时文件，以文本告知模型文件路径。
+
 ## Toolkit
 
 ```python
