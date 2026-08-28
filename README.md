@@ -4,18 +4,18 @@
 
 > Claude Code Skill：AgentScope 2.0 多智能体框架开发指南
 
-![version](https://img.shields.io/badge/AgentScope-v2.0.7-blue)
+![version](https://img.shields.io/badge/AgentScope-v2.0.7.post1-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
 ## 简介
 
-这是一个 [Claude Code](https://claude.ai/code) 的 Skill 插件，为 [AgentScope 2.0](https://github.com/agentscope-ai/agentscope)（`agentscope-ai`）提供全面的开发参考。安装后，Claude Code 在处理 AgentScope 相关任务时会自动加载此技能，获得 v2 API 的准确知识。文档持续跟随上游源码同步，当前对应 **v2.0.7**（跟随 main 分支，覆盖 v2.0.6 起的后续变更）。
+这是一个 [Claude Code](https://claude.ai/code) 的 Skill 插件，为 [AgentScope 2.0](https://github.com/agentscope-ai/agentscope)（`agentscope-ai`）提供全面的开发参考。安装后，Claude Code 在处理 AgentScope 相关任务时会自动加载此技能，获得 v2 API 的准确知识。文档持续跟随上游源码同步，当前对应 **v2.0.7.post1**（跟随 main 分支，覆盖 v2.0.7 发布后合入的变更）。
 
 ⚠️ **注意**：AgentScope 2.0 与旧版 `modelscope/agentscope`（v1.x）的 API 完全不同，不兼容。
 
 ## 涵盖内容
 
-- **Agent 创建**：单一 `Agent` 类，`reply()` 返回异步事件流；`ReActConfig.max_iters` 默认 50（v2.0.7+，此前 20）
+- **Agent 创建**：单一 `Agent` 类，`reply()` 返回异步事件流；`ReActConfig.max_iters` 默认 50（v2.0.7+，此前 20）；达到上限先强制一次无工具的最终文本总结再以 `EXCEED_MAX_ITERS` 结束（v2.0.7.post1+）
 - **Credential 体系**：OpenAI / Anthropic / DashScope / Gemini / Ollama 认证
 - **Model 配置**：ChatModelBase、重试、fallback、Omni 模型音频输出、`extra_body` 透传（v2.0.3+）、Anthropic 推理控制（`thinking_mode` / `thinking_display` / `reasoning_effort`，v2.0.6+）
 - **Embedding / TTS**（v2.0.2+，实验性）：独立的 `embedding`（v2.0.3 重构为泛型基类，dimensions 必填 + 多模态路由） / `tts` 模块，Credential 统一暴露多模态能力；TTS 含 `OpenAITTSModel`（v2.0.4+）/ DashScope `CosyVoice`（同一类支持普通/实时）/ `DashScopeRealtimeTTSModel` / `GeminiTTSModel`（v2.0.5+）
@@ -25,7 +25,8 @@
 - **AgentState**：上下文、摘要、会话、权限、任务管理
 - **事件系统**：`REPLY_START` → `TEXT_BLOCK_DELTA` → `TOOL_CALL_*` → `REPLY_END`，含 `DATA_BLOCK_*` 音频流、Agent 中断（`UserInterruptEvent`，v2.0.4+）、回复错误上报（`ErrorType` 分类 + `ReplyFinishedReason.ERROR`，v2.0.5+）、`ExceedMaxItersEvent` deprecated 改查 `ReplyEndEvent.finished_reason`（v2.0.6+）、token 用量含提示词缓存统计（`Usage` 新增 `cache_input_tokens` / `cache_creation_input_tokens`，v2.0.7+；`ContextConfig.trigger_ratio` 同期起允许取 0.9）
 - **Agent 高级能力**：结构化输出（`structured_schema` Pydantic 模型，v2.0.5+）、运行时状态注入（时间/任务/上下文压缩感知，`InjectionConfig`，v2.0.5+）
-- **终端控制台 console**：`launch_console` 一行启动交互式终端对话（自动渲染流式回复、工具调用 y/n 确认、Ctrl+C 中断）、`ConsoleRenderer` 被动事件渲染器（嵌入自定义循环消费 `reply_stream`）——试运行 / 调试首选入口，无 session 与持久化
+- **终端控制台 console**：`launch_console` 一行启动交互式终端对话（自动渲染流式回复、工具调用 y/n 确认、Ctrl+C 中断）、`ConsoleRenderer` 被动事件渲染器（嵌入自定义循环消费 `reply_stream`）——试运行 / 调试首选入口，无 session 与持久化；`agent` 参数亦接受 pipeline（v2.0.7.post1+）
+- **Pipeline 流水线**（v2.0.7.post1+）：`agentscope.pipeline` 的 `GoalPipeline` 把 executor（执行者）与 verifier（校验者）编成目标达成循环——执行报告 → 结构化验收 pass/fail/impossible → fail 带反馈重试至 `max_iters`；对外暴露与 `Agent` 相同的 `reply_stream` 事件流，支持 HITL 暂停恢复
 - **Permission / ToolGroup / Skill**：权限控制（五种 `PermissionMode`，v2.0.4.post1 起统一只读快路径，`DONT_ASK` 升级为 `ACCEPT_EDITS` 的无人值守版；v2.0.5+ 起并发批量确认豁免、含注入风险的命令不再当只读）、工具组、技能系统
 - **Middleware**：拦截 reply/reasoning/check_permission/acting/model_call/compress_context（`on_check_permission` 权限检查 hook 为 v2.0.5+；`on_reply` 可吞掉 `ReplyEndEvent` 在同一 reply 内续跑新一轮 reasoning-acting，v2.0.6+），含内置 `TTSMiddleware` / `ReplyBudgetControlMiddleware` / `TracingMiddleware`（OpenTelemetry 追踪）/ `Mem0Middleware`（mem0 跨会话长期记忆，v2.0.3+）/ `ReMeMiddleware`（内嵌 ReMe 长期记忆，v2.0.4+）/ `AgenticMemoryMiddleware`（文件系统长期记忆，v2.0.4+）/ `RAGMiddleware`（检索增强）
 - **Workspace**：`LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace` / `K8sWorkspace` / `OpenSandboxWorkspace` / `DaytonaWorkspace`（后三者 v2.0.4+）/ `AppleContainerWorkspace`（macOS 26+ Apple Container，v2.0.5+）/ `BubblewrapWorkspace`（Linux bubblewrap 沙箱，v2.0.5+），均支持内置工具（Bash/Read/Write/Edit/Grep/Glob）在容器/云沙箱/K8s Pod 执行，Backend 抽象（`LocalBackend` / `DockerBackend` / `E2BBackend` / `K8sBackend` / `OpenSandboxBackend` / `DaytonaBackend` / `AppleContainerBackend` / `BubblewrapBackend`）；`skill_paths` 路径支持 `~` 展开（v2.0.5+）；MCP 按 agent+session 隔离（共享 workspace 下延迟实例化 + 私有实例、`.mcp` v2 schema、`purge_session` 会话清理、`max_live_stateful_mcps` LRU 容量管理，v2.0.6+）；Skill 按 agent 隔离（`skills/.seed` 模板 + 每 agent 一个分区，惰性装备、原地可编辑、`list/add/remove_skill` 带 `agent_id`、删除 agent 时 `purge_agent` 清理，v2.0.6+）
@@ -56,6 +57,7 @@ agentscope-v2-skill/
 ├── SKILL.md                  # 技能定义与主文档（Claude Code 自动加载）
 ├── references/               # 详细参考文档
 │   ├── agent-events.md       # Agent 配置和事件系统
+│   ├── pipeline.md           # Pipeline 流水线（GoalPipeline）
 │   ├── messages.md           # 消息类型与内容块
 │   ├── models.md             # 模型、Credential、Embedding/TTS 多模态
 │   ├── permissions.md        # 权限与工具组

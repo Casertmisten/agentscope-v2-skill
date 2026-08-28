@@ -86,6 +86,9 @@ await agent.compress_context(instructions=HintBlock(hint="保留 API 迁移决�
 ```python
 react_config = ReActConfig(
     max_iters=50,            # 推理-行动最大迭代次数（v2.0.7+ 默认 50，此前为 20）
+    # v2.0.7.post1+：达到 max_iters 且尚无最终消息时，会注入 system-reminder 并以
+    # tool_choice=none 强制一次「无工具最终总结」调用，产出文本总结后再结束
+    # （finished_reason 仍为 EXCEED_MAX_ITERS，见下文）
     stop_on_reject=False,    # 工具被拒绝时是否停止
     interruption_message="I notice the interruption. How can I help you?",
     # 中断事件触发后，agent 回退并产出的替代文案（见下文「Agent 中断」）
@@ -287,7 +290,7 @@ await agent.reply(UserInterruptEvent(reply_id="原reply_id"))
 |---|---|
 | `completed` | 正常完成 |
 | `interrupted` | 被 `UserInterruptEvent` 中断 |
-| `exceed_max_iters` | 超过 `ReActConfig.max_iters` |
+| `exceed_max_iters` | 超过 `ReActConfig.max_iters`（v2.0.7.post1+ 会先强制一次无工具的最终文本总结，总结消息也以此 reason 结束） |
 | `error`（v2.0.5+） | reply 过程抛异常，`error: ErrorInfo` 字段填充错误分类 |
 
 > v2.0.5+：reply 出错时不再静默崩溃——`Msg` 和 `ReplyEndEvent` 都会带上 `finished_reason=ERROR`
@@ -302,6 +305,16 @@ await agent.reply(UserInterruptEvent(reply_id="原reply_id"))
 > exit_events 会同时包含兼容用的 `ExceedMaxItersEvent` 与带 `exceed_max_iters` reason 的
 > `ReplyEndEvent`；`on_reply` 中间件可吞掉后者续跑（见
 > [middleware-workspace.md](middleware-workspace.md)）。
+>
+> v2.0.7.post1+：达到 `max_iters` 的行为变为**先总结再退出**——推理-行动迭代预算用尽且尚无
+> 最终消息时，Agent 注入一条 system-reminder（`HintBlock`，source 为
+> `{"label": "System", "sublabel": "Max Iterations Reached"}`，要求总结已有工作与发现、
+> 直接给出最终答案），并以 `tool_choice=none` 强制最后一次模型调用；这次总结消息的
+> `finished_reason` 为 `EXCEED_MAX_ITERS`（事件流同样包含兼容用的 `ExceedMaxItersEvent`）。
+> 若强制总结仍未产出最终消息，才回退为占位消息
+> `"The maximum reasoning-acting iterations are exceeded."`。
+> 带 `structured_schema` 时不触发总结，走 `structured_output_grace_iters` 宽限路径
+> （宽限耗尽仍无结构化输出才以 `EXCEED_MAX_ITERS` 退出）。
 
 > 注意区分两类「中断」：
 > - **parked reply 的中断**：用 `UserInterruptEvent`（本文所述），针对等待 HITL/外部结果的 reply。
@@ -341,7 +354,7 @@ asyncio.run(main())
 
 ```python
 await launch_console(
-    agent: Agent,
+    agent: Agent | PipelineProtocol,   # v2.0.7.post1+ 也可传 pipeline（如 GoalPipeline）
     user_name: str = "user",            # 用户消息 name，兼作输入提示符
     verbosity: Verbosity = "default",   # "quiet" | "default" | "debug"
     max_tool_result_lines: int | None = 20,  # 打印工具结果时的截断行数；None 不截断

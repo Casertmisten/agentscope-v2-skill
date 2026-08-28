@@ -4,7 +4,7 @@ description: |
   AgentScope 2.0 (agentscope-ai) 多智能体框架开发指南。当用户提到 AgentScope、agentscope、
   多智能体开发、基于 AgentScope 构建 agent/智能体应用时使用此 skill。即使用户只是说"写个 agent"、
   "多智能体"、"帮我用 agentscope"也应触发。注意：这是 agentscope-ai/agentscope v2 版本，
-  与旧版 modelscope/agentscope 的 API 完全不同（无 memory/pipeline/formatter 模块）。
+  与旧版 modelscope/agentscope 的 API 完全不同（无 memory 模块，pipeline 为 v2 全新设计）。
 涵盖：Agent 创建、Credential/Model 配置、Toolkit/ToolBase 工具注册（含 ToolMiddlewareBase 工具级中间件、Windows PowerShell 工具）、
 MCPClient 集成、AgentState 状态管理、Event 事件系统、Permission 权限、ToolGroup、Skill 技能系统、
 Middleware 中间件（含 TTSMiddleware / ReplyBudgetControlMiddleware / TracingMiddleware / Mem0Middleware 跨会话长期记忆 /
@@ -23,12 +23,13 @@ DirectoryListing + WorkspaceStatus/GitStatus + session cwd 工作目录）/ extr
 Anthropic thinking_mode 推理控制 / Channel IM 频道接入钉钉、飞书与 Discord / Skill 按 agent 分区隔离）Agent 中断（UserInterruptEvent）、
 回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR）、跨用户资源共享（ResourceAccessPolicy 抽象）、
 Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 workspace）、
-终端控制台 console（launch_console 交互式终端对话调试 / ConsoleRenderer 事件流渲染，内置 HITL 工具确认与 Ctrl+C 中断）、set_id_factory 全局 ID 工厂等。
+终端控制台 console（launch_console 交互式终端对话调试 / ConsoleRenderer 事件流渲染，内置 HITL 工具确认与 Ctrl+C 中断，agent 与 pipeline 均可传入）、
+Pipeline 流水线（GoalPipeline 执行者-校验者目标达成循环，对外暴露与 Agent 相同的 reply_stream 事件流）、set_id_factory 全局 ID 工厂等。
 ---
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
 
-AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.7`（main 分支，含 v2.0.6 之后的变更）。
+AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.7.post1`（main 分支，v2.0.7 发布后合入的变更标注 v2.0.7.post1+）。
 
 **核心特性**：事件驱动架构、权限系统（含 on_check_permission 中间件 hook、批量确认豁免、
 DEFAULT/DONT_ASK 只读快路径）、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
@@ -70,7 +71,11 @@ ChannelLifecycleDispatcher 出站转发 + 确定性派生会话 + 交互卡片�
 Skill 按 agent 隔离（`skills/.seed` 模板 + 每 agent 一个分区，惰性装备、原地可编辑、删除 agent 时
 `purge_agent` 清理，`list/add/remove_skill` 带 `agent_id`，v2.0.6+）、
 终端控制台 console（`launch_console` 交互式终端对话：自动渲染流式回复、处理工具调用 y/n 确认、Ctrl+C 中断当前 reply；
-`ConsoleRenderer` 被动事件渲染器，可嵌入自定义循环消费 `reply_stream`；试运行 / 调试首选入口，无 session 与持久化）、
+`ConsoleRenderer` 被动事件渲染器，可嵌入自定义循环消费 `reply_stream`；试运行 / 调试首选入口，无 session 与持久化；
+v2.0.7.post1+ `agent` 参数接受 `Agent | PipelineProtocol`）、
+Pipeline 流水线（`GoalPipeline` 执行者-校验者目标达成循环：executor 产出执行报告 → verifier 结构化验收
+pass/fail/impossible → fail 带反馈重试至 `max_iters`；支持 HITL 暂停恢复，对外暴露与 Agent 相同的事件流，v2.0.7.post1+）、
+达到 `max_iters` 后强制一次无工具的最终文本总结再结束（总结消息 `finished_reason=EXCEED_MAX_ITERS`，v2.0.7.post1+）、
 on_reply 中间件可吞掉 `ReplyEndEvent` 续跑回复循环（v2.0.6+，最终 `Msg` 仅在事件逃出中间件链后产生；
 `ExceedMaxItersEvent` 同步 deprecated，改查 `ReplyEndEvent.finished_reason`）、
 MCP 有状态客户端支持 close 后重连（v2.0.6+）、
@@ -109,7 +114,7 @@ Agent (单一类，reply_stream 返回事件流，reply 返回最终消息)
 | Agent | AgentBase/ReActAgentBase/ReActAgent | 单一 `Agent` 类 |
 | 记忆 | MemoryBase/InMemoryMemory/RedisMemory | `AgentState.context` (list[Msg]) |
 | 格式化器 | FormatterBase/ChatFormatter 等 | `formatter` 模块存在，但由各 model 实现内部使用，Agent 无需手动选 |
-| 管道 | MsgHub/SequentialPipeline/FanoutPipeline | 无，直接用 asyncio 编排 |
+| 管道 | MsgHub/SequentialPipeline/FanoutPipeline | `pipeline` 模块全新设计：`GoalPipeline` 执行者-校验者循环（v2.0.7.post1+），其余编排直接用 asyncio |
 | 工具 | 普通函数 + Toolkit | `ToolBase` 子类 + `Toolkit` |
 | MCP | HttpStatefulClient/StatelessClient 等 | 统一 `MCPClient` |
 | 消息 | Msg(name, role, content) | `UserMsg/AssistantMsg/SystemMsg` 工厂函数 |
@@ -160,6 +165,7 @@ asyncio.run(main())
 | 集成 MCP | [references/tools.md](references/tools.md) |
 | 管理状态 (AgentState) | [references/state.md](references/state.md) |
 | Agent 配置和事件（含结构化输出 / 运行时状态注入 / 错误上报） | [references/agent-events.md](references/agent-events.md) |
+| Pipeline 流水线（GoalPipeline 执行者-校验者循环） | [references/pipeline.md](references/pipeline.md) |
 | 终端控制台（launch_console 交互调试 / ConsoleRenderer 事件渲染） | [references/agent-events.md](references/agent-events.md) |
 | 权限和工具组（含 on_check_permission hook） | [references/permissions.md](references/permissions.md) |
 | RAG 知识库（KnowledgeBase / ElasticsearchStore / RAGMiddleware） | [references/rag.md](references/rag.md) |
@@ -231,6 +237,8 @@ agent = Agent(
     ),
     react_config=ReActConfig(           # ReAct 循环配置
         max_iters=50,                   # 最大迭代次数（v2.0.7+ 默认 50，此前为 20）
+        # v2.0.7.post1+：达到上限且尚无最终消息时，先注入提示并禁用工具强制一次
+        # 最终文本总结，再以 finished_reason=EXCEED_MAX_ITERS 结束
         stop_on_reject=False,
     ),
     model_config=ModelConfig(           # 模型重试配置
@@ -298,7 +306,7 @@ async for event in agent.reply_stream(user_msg):
 from agentscope.console import launch_console, ConsoleRenderer
 ```
 
-**`launch_console`** — 一行启动交互式对话：从 stdin 读输入，自动渲染流式回复，agent 请求确认时提示 `y/n`，`Ctrl+C` 中断当前 reply（再 `Ctrl+C` 或输入 `exit` 退出）。无 session 管理、无持久化，对话仅存于 `agent.state`，随进程结束：
+**`launch_console`** — 一行启动交互式对话：从 stdin 读输入，自动渲染流式回复，agent 请求确认时提示 `y/n`，`Ctrl+C` 中断当前 reply（再 `Ctrl+C` 或输入 `exit` 退出）。无 session 管理、无持久化，对话仅存于 `agent.state`，随进程结束。`agent` 参数也可传 pipeline（`Agent | PipelineProtocol`，v2.0.7.post1+）：
 
 ```python
 agent = Agent(name="Friday", system_prompt="...", model=model, toolkit=toolkit)
@@ -317,6 +325,27 @@ print(renderer.last_msg)             # 累积出的 Msg
 
 `verbosity`：`"quiet"` 仅回复文本与错误；`"default"` 额外含思考、工具调用/结果、提示块、token 用量、HITL 通知；`"debug"` 再加生命周期等默认不可见事件。详情见
 [references/agent-events.md](references/agent-events.md)。
+
+## Pipeline 流水线（v2.0.7.post1+）
+
+`agentscope.pipeline` 把多个 agent 按固定逻辑编排成整体，对外暴露与 `Agent` 相同的
+`reply_stream` 事件流，可直接传给 `launch_console` 等接受 agent 的接口：
+
+```python
+from agentscope.pipeline import GoalPipeline
+
+# executor 执行目标 → verifier 结构化验收（pass/fail/impossible）
+# fail 带反馈重试，直到通过 / 判定不可达成 / 达到 max_iters
+pipe = GoalPipeline(executor=executor, verifier=verifier, max_iters=10)
+
+async for event in pipe.reply_stream(UserMsg("user", "跑通 parser 模块的单元测试")):
+    ...   # 透传两个 agent 的全部事件（含 HITL，支持暂停恢复）
+
+await launch_console(pipe)    # 交互式调试整个流水线
+```
+
+executor / verifier 通常共享同一个 Workspace（verifier 才能读到 executor 的产物）。详情见
+[references/pipeline.md](references/pipeline.md)。
 
 ## 消息创建
 
