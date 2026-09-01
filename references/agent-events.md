@@ -81,6 +81,9 @@ await agent.compress_context(context_config=ContextConfig(trigger_ratio=0.5))
 await agent.compress_context(instructions=HintBlock(hint="保留 API 迁移决策"))
 ```
 
+> 除自动压缩外，v2.0.7.post1+ 还可让 agent 通过内置 `CompressContext` 工具自主压缩，
+> 见下文 ContextConfig 章节。
+
 ## ReActConfig
 
 ```python
@@ -117,8 +120,21 @@ context_config = ContextConfig(
     compression_prompt="...", # 自定义压缩提示
     summary_template="...",   # 自定义摘要模板
     summary_schema={...},     # 自定义摘要 JSON Schema（默认使用 SummarySchema）
+    context_buffer_ratio=0.2, # 压缩预警 buffer 区宽度（v2.0.7.post1+ 自 InjectionConfig 迁入）
+    compression_tool_enabled=False,   # v2.0.7.post1+：暴露 CompressContext 工具给 agent
+    compression_fallback_to_truncation=True,  # v2.0.7.post1+：摘要生成失败时是否回退截断
 )
 ```
+
+### agent 自主上下文压缩工具（v2.0.7.post1+）
+
+`ContextConfig(compression_tool_enabled=True)` 后，Agent 会注册内置工具
+`CompressContext`（权限恒 ALLOW）：配合运行时状态注入，当 token 用量进入
+`trigger_ratio - context_buffer_ratio` 起的预警区间时，提示 agent 可在**任务间隙**
+自行调用该工具，把已完成工作压缩为续跑摘要、保留近期上下文——而不是等到硬阈值
+被动压缩。上下文不够长时调用则原样保留并返回提示；摘要生成失败时工具返回错误
+（是否回退截断由 `compression_fallback_to_truncation` 控制，关闭后改为抛错、
+上下文保持原样）。
 
 ## 事件系统 (Event)
 
@@ -438,8 +454,9 @@ async for item in agent.reply_stream(
 
 ## 运行时状态注入 InjectionConfig（v2.0.5+）
 
-Agent 默认在每个 reasoning 步骤前，把**当前墙钟时间、(plan) 任务状态、上下文压缩临近预警**
-作为 `HintBlock` 追加到 `state.context`（不改 system prompt，避免破坏 prompt caching）。
+Agent 默认在每个 reasoning 步骤前，把**当前墙钟时间、(plan) 任务状态、上下文压缩临近预警、
+重复工具错误提醒**作为 `HintBlock` 追加到 `state.context`（不改 system prompt，避免破坏
+prompt caching；工具错误提醒为 v2.0.7.post1+ 新增）。
 由 `InjectionConfig` 控制，从 `agentscope.agent` 导出：
 
 ```python
@@ -454,21 +471,28 @@ agent = Agent(
         timezone="UTC",               # 时区名；无效/缺 tzdata 时回退 UTC
         time_format="%Y-%m-%dT%H:%M:%S",
         time_interval=0.5,            # 小时；距上次注入超过该值再注入时间
-        context_buffer_ratio=0.2,     # 进入压缩阈值前 buffer 区时注入预警
+        # context_buffer_ratio 已 deprecated（v2.0.7.post1+），
+        # 改设在 ContextConfig.context_buffer_ratio；此处传值仍生效并覆盖
         template="...{runtime_state}...",  # 必须含 {runtime_state} 占位符
         task_tool_names=["TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
         emit_hint_event=True,         # 是否发 HintBlockEvent 供前端展示
         extra_fields={},              # 额外注入字段
+        tool_retries_limit=3,         # v2.0.7.post1+：同名同参调用连续失败 N 次触发提示
+        tool_retries_hint="...",      # v2.0.7.post1+：提示模板，支持 {tool_name}/{count}
     ),
 )
 ```
 
-三个注入维度（各自独立判断是否触发）：
+四个注入维度（各自独立判断是否触发）：
 - **时间**：context 中无记录时间，或距上次注入超过 `time_interval` 小时。
 - **任务**：存在 pending/in-progress 任务，且 agent 尚未感知（context 里无相关工具调用/注入记录）。
 - **上下文**：reply 第一轮且 token 数进入压缩阈值前的 buffer 区时，提醒 agent 压缩临近。
+- **工具错误**（v2.0.7.post1+）：同一工具+相同参数的调用在末尾连续失败达到
+  `tool_retries_limit`（默认 3）次时，注入 `tool_retries_hint`（支持 `{tool_name}`/
+  `{count}` 占位符），提醒 agent 停止原样重试、换一种方式。
 
-约束：`context_buffer_ratio` 必须 < `ContextConfig.trigger_ratio`，否则 `Agent.__init__` 报错。
+约束：`ContextConfig.context_buffer_ratio` 必须 < `ContextConfig.trigger_ratio`
+（仅当运行时注入或压缩工具开启时校验），否则 `Agent.__init__` 报错。
 HintBlock 的 source 固定为 `{"label": "System", "sublabel": "Runtime State"}`。
 
 ## 回复错误上报（v2.0.5+）

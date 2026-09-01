@@ -95,6 +95,8 @@ toolkit = Toolkit(tools=[FunctionTool(add_numbers)])
 - v2.0.7+ 支持传入 `input_schema` 覆盖自动生成的 schema：JSON schema dict 或 pydantic `BaseModel` 子类
   （经 `model_json_schema()` 转换并移除 `title` 字段）；为 `None`（默认）时仍从函数签名/docstring 生成，
   约束（枚举、取值范围等）用 `typing.Literal` 或 `typing.Annotated[int, Field(ge=0, le=10)]` 表达。
+- v2.0.7.post1+ 支持构造参数 `permission=PermissionDecision(behavior=..., message=...)`
+  直接指定权限决策；不传时默认 `ASK`（要求用户确认，见 permissions 文档）。
 
 **方式 2：继承 ToolBase — 需要权限检查/状态注入等高级能力**
 

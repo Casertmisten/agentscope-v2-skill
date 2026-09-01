@@ -362,7 +362,10 @@ mw = RAGMiddleware(
         emit_hint_event=True,      # static 模式:发 HintBlockEvent 供前端展示
         persist_hint=False,        # static 模式:True 则注入的 hint 保留在上下文中
         # hint_template="...{context}...",  # 必须含且仅含一个 {context}(默认有内置模板)
+        # rerank_candidate_k=10,   # v2.0.7.post1+：供 rerank 模型评判的候选数
+        # rerank_prompt="...",     # v2.0.7.post1+：rerank 指令模板({query}/{top_k} 占位符)
     ),
+    # rerank_model=llm,            # v2.0.7.post1+：LLM 重排序模型(ChatModelBase 实例)
 )
 
 agent = Agent(
@@ -382,6 +385,20 @@ agent = Agent(
 | `emit_hint_event` | `True` | static 模式下发 `HintBlockEvent`,前端可展示命中片段 |
 | `persist_hint` | `False` | static 模式下是否保留注入的 hint(默认模型调用后即移除,避免污染下一轮) |
 | `hint_template` | 内置 | 包裹检索结果的模板,须含**且仅含一个** `{context}` 占位符,否则校验报错 |
+| `rerank_candidate_k` | `None` | v2.0.7.post1+：供 rerank 模型评判的候选 chunk 数(≥top_k,默认 2×top_k,上限 50);未配置 rerank 模型时忽略 |
+| `rerank_prompt` | 内置 | v2.0.7.post1+：rerank 指令模板,含 `{query}` 与可选 `{top_k}` 占位符,候选内容由中间件追加 |
+
+### LLM 重排序（v2.0.7.post1+）
+
+构造时传 `rerank_model`(任意 `ChatModelBase` 实例)即启用:检索扩宽到
+`rerank_candidate_k`(默认 2×`top_k`,上限 50)条候选,由 LLM 从中挑出最终 `top_k` 条,
+对 static/agentic 两种模式同时生效。要点:
+
+- 模型通过 `generate_structured_output` 只返回候选 id(c1/c2/…),chunk 内容/分数/元数据
+  原样保留;遗漏、重复或杜撰的 id 被忽略,剩余候选按向量序补位,部分有效输出也能优雅降级。
+- 多模态 chunk(如图片)与文本一起参与排序——无法渲染该模态的 rerank 模型会看到候选来源
+  标签但读不到内容,默认提示词要求把读不到的候选排在最后。
+- **best-effort**:rerank 模型调用失败时回退向量检索顺序,只记 warning 不中断。
 
 ### static 模式工作流
 
@@ -401,7 +418,7 @@ agent = Agent(
 
 ### 多 KB(不同 embedding 模型)注意事项
 
-一个 `RAGMiddleware` 可绑定用不同 embedding 模型的 KB,各 KB 独立 embed、独立检索。但**不同 embedding 模型的分数不可严格比较**——当前实现按原始 score 排序合并。若部署中这种差异很重要,建议改用 rank-based 融合(如 RRF);每个 `kb.search` 本身已返回有序结果。
+一个 `RAGMiddleware` 可绑定用不同 embedding 模型的 KB,各 KB 独立 embed、独立检索。但**不同 embedding 模型的分数不可严格比较**——当前实现按原始 score 排序合并。若部署中这种差异很重要,建议改用 rank-based 融合(如 RRF);每个 `kb.search` 本身已返回有序结果。配置 `rerank_model`(v2.0.7.post1+)后由 LLM 评判相关性,不再依赖跨 KB 分数可比,也可缓解该问题。
 
 ### 接入 Agent 完整示例(static + agentic)
 

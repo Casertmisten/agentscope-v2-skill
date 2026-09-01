@@ -9,12 +9,12 @@ description: |
 MCPClient 集成、AgentState 状态管理、Event 事件系统、Permission 权限、ToolGroup、Skill 技能系统、
 Middleware 中间件（含 TTSMiddleware / ReplyBudgetControlMiddleware / TracingMiddleware / Mem0Middleware 跨会话长期记忆 /
 ReMeMiddleware 内嵌 ReMe 长期记忆 / AgenticMemoryMiddleware 文件系统长期记忆 / RAGMiddleware 检索增强，及 on_check_permission
-权限检查洋葱 hook、on_reply 吞 ReplyEndEvent 续跑回复循环）、Agent 结构化输出（structured_schema Pydantic 模型）、运行时状态注入（时间/任务/上下文压缩感知）、
+权限检查洋葱 hook、on_reply 吞 ReplyEndEvent 续跑回复循环）、Agent 结构化输出（structured_schema Pydantic 模型）、运行时状态注入（时间/任务/上下文压缩感知/重复工具错误提醒/agent 自主压缩工具）、
 Workspace 工作区（八种 Workspace 均支持内置工具，Backend 抽象：LocalBackend / DockerBackend / E2BBackend /
 K8sBackend / OpenSandboxBackend / DaytonaBackend / AppleContainerBackend / BubblewrapBackend）、Embedding/TTS 多模态模型
 （Embedding v2.0.3 重构为泛型基类，dimensions 必填 + FileEmbeddingCache 文件缓存；TTS 含 OpenAITTSModel /
 DashScope CosyVoice / GeminiTTSModel 等）、RAG 知识库（agentscope.rag：
-KnowledgeBase / QdrantStore / MilvusLiteStore / MongoDBStore / ElasticsearchStore / Parser-Chunker 管线 / RAGMiddleware static+agentic 双模式）、
+KnowledgeBase / QdrantStore / MilvusLiteStore / MongoDBStore / ElasticsearchStore / Parser-Chunker 管线 / RAGMiddleware static+agentic 双模式 + LLM 重排序）、
 SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影 + AgentInvite 邀请已有 agent）、App 服务化（含 KnowledgeBaseManager /
 BlobStore / 内嵌或独立索引 worker / MessageBus 消息总线：
 RedisMessageBus / InMemoryMessageBus / Session Status 端点（含 list_sessions 内联 status + 裁剪 context） /
@@ -44,12 +44,14 @@ Mem0Middleware 跨会话长期记忆 / ReMeMiddleware 内嵌 ReMe 长期记忆 /
 Embedding/TTS 多模态模型（Embedding v2.0.3 重构为泛型基类，dimensions 为必填契约参数 + 多模态路由 + FileEmbeddingCache 文件缓存；
 TTS 含 OpenAITTSModel / DashScopeTTSModel / DashScopeRealtimeTTSModel / DashScopeCosyVoiceTTSModel / GeminiTTSModel）、
 RAG 知识库（agentscope.rag：KnowledgeBase + QdrantStore + MilvusLiteStore（v2.0.4+）+ MongoDBStore（v2.0.4+）
-+ ElasticsearchStore（v2.0.5+）+ Parser/Chunker 索引管线 + RAGMiddleware static/agentic 双模式）、
++ ElasticsearchStore（v2.0.5+）+ Parser/Chunker 索引管线 + RAGMiddleware static/agentic 双模式
++ LLM 重排序 rerank_model，v2.0.7.post1+）、
 SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影 + AgentInvite 邀请已有 agent 入队）、
 服务化知识库（KnowledgeBaseManager + LocalBlobStore/S3BlobStore + 内嵌或独立索引 worker）、
 Session Status 统一状态查询端点（v2.0.4+）、Agent 中断机制（UserInterruptEvent，v2.0.4+）、
 回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR，v2.0.5+）、
-Agent 结构化输出（structured_schema，v2.0.5+）、运行时状态注入（InjectionConfig，v2.0.5+）、
+Agent 结构化输出（structured_schema，v2.0.5+）、运行时状态注入（InjectionConfig，v2.0.5+；
+重复工具错误提醒与 agent 自主上下文压缩工具 CompressContext 为 v2.0.7.post1+）、
 跨用户资源共享（ResourceAccessPolicy 抽象，group/org 场景）、
 Workspace 新增 AppleContainerWorkspace / BubblewrapWorkspace（v2.0.5+）、Windows PowerShell 工具（v2.0.5+）、
 skill 路径支持 `~` 展开（v2.0.5+）、Hub 注册中心（GitHubMCPHub / ClawSkillHub，v2.0.5+，
@@ -498,8 +500,9 @@ res = await agent.reply(
 
 ## 运行时状态注入（v2.0.5+）
 
-Agent 默认在每轮推理前把**当前墙钟时间、任务状态、上下文压缩临近预警**作为 `HintBlock` 注入
-`state.context`（不改 system prompt，避免破坏 prompt caching）。由 `InjectionConfig` 控制：
+Agent 默认在每轮推理前把**当前墙钟时间、任务状态、上下文压缩临近预警、重复工具错误提醒**
+（最后者为 v2.0.7.post1+ 新增）作为 `HintBlock` 注入 `state.context`（不改 system prompt，
+避免破坏 prompt caching）。由 `InjectionConfig` 控制：
 
 ```python
 from agentscope.agent import Agent, InjectionConfig
@@ -512,13 +515,18 @@ agent = Agent(
         inject_runtime_state=True,   # 默认开启
         timezone="Asia/Shanghai",
         time_interval=0.5,           # 距上次注入超过 0.5 小时再注入时间
-        context_buffer_ratio=0.2,    # 进入压缩阈值前 20% 区间时预警
+        tool_retries_limit=3,        # v2.0.7.post1+：同名同参调用连续失败 N 次注入提醒
     ),
 )
 # 关闭：InjectionConfig(inject_runtime_state=False)
 ```
 
-约束：`context_buffer_ratio` 必须 < `ContextConfig.trigger_ratio`，否则构造报错。
+约束：`ContextConfig.context_buffer_ratio`（v2.0.7.post1+ 自 InjectionConfig 迁入，原字段
+deprecated 但传值仍生效）必须 < `ContextConfig.trigger_ratio`，否则构造报错。
+
+v2.0.7.post1+：`ContextConfig(compression_tool_enabled=True)` 可向 agent 暴露内置
+`CompressContext` 工具，配合注入预警让 agent 在任务间隙**自主**压缩上下文（详见
+[references/agent-events.md](references/agent-events.md)）。
 
 ## 回复错误上报（v2.0.5+）
 
