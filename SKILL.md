@@ -24,7 +24,8 @@ Anthropic thinking_mode 推理控制 / Channel IM 频道接入钉钉、飞书与
 回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR）、跨用户资源共享（ResourceAccessPolicy 抽象）、
 Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 workspace）、
 终端控制台 console（launch_console 交互式终端对话调试 / ConsoleRenderer 事件流渲染，内置 HITL 工具确认与 Ctrl+C 中断，agent 与 pipeline 均可传入）、
-Pipeline 流水线（GoalPipeline 执行者-校验者目标达成循环，对外暴露与 Agent 相同的 reply_stream 事件流）、set_id_factory 全局 ID 工厂等。
+Pipeline 流水线（GoalPipeline 执行者-校验者目标达成循环，对外暴露与 Agent 相同的 reply_stream 事件流）、
+A2A 协议远程智能体（A2AAgent 客户端适配器 + A2AAgentState，连接任意 A2A 1.0 服务）、set_id_factory 全局 ID 工厂等。
 ---
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
@@ -78,6 +79,9 @@ v2.0.7.post1+ `agent` 参数接受 `Agent | PipelineProtocol`）、
 Pipeline 流水线（`GoalPipeline` 执行者-校验者目标达成循环：executor 产出执行报告 → verifier 结构化验收
 pass/fail/impossible → fail 带反馈重试至 `max_iters`；支持 HITL 暂停恢复，对外暴露与 Agent 相同的事件流，v2.0.7.post1+）、
 达到 `max_iters` 后强制一次无工具的最终文本总结再结束（总结消息 `finished_reason=EXCEED_MAX_ITERS`，v2.0.7.post1+）、
+A2A 协议远程智能体（`A2AAgent`：A2A 1.0 远端 agent 的有状态客户端适配器，不继承 Agent，
+提供 reply/reply_stream/observe 同风格接口，`agentscope[a2a]` extra；`A2AAgentState` 持有
+context_id/task_id 支持会话续接与 Task 续跑，DataBlock 事件新增 `name` 与 `data`/`url` 二选一，v2.0.7.post1+）、
 on_reply 中间件可吞掉 `ReplyEndEvent` 续跑回复循环（v2.0.6+，最终 `Msg` 仅在事件逃出中间件链后产生；
 `ExceedMaxItersEvent` 同步 deprecated，改查 `ReplyEndEvent.finished_reason`）、
 MCP 有状态客户端支持 close 后重连（v2.0.6+）、
@@ -167,6 +171,7 @@ asyncio.run(main())
 | 集成 MCP | [references/tools.md](references/tools.md) |
 | 管理状态 (AgentState) | [references/state.md](references/state.md) |
 | Agent 配置和事件（含结构化输出 / 运行时状态注入 / 错误上报） | [references/agent-events.md](references/agent-events.md) |
+| A2A 协议远程智能体（A2AAgent 客户端适配器 / A2AAgentState） | [references/agent-events.md](references/agent-events.md) |
 | Pipeline 流水线（GoalPipeline 执行者-校验者循环） | [references/pipeline.md](references/pipeline.md) |
 | 终端控制台（launch_console 交互调试 / ConsoleRenderer 事件渲染） | [references/agent-events.md](references/agent-events.md) |
 | 权限和工具组（含 on_check_permission hook） | [references/permissions.md](references/permissions.md) |
@@ -348,6 +353,31 @@ await launch_console(pipe)    # 交互式调试整个流水线
 
 executor / verifier 通常共享同一个 Workspace（verifier 才能读到 executor 的产物）。详情见
 [references/pipeline.md](references/pipeline.md)。
+
+## A2A 远程智能体（v2.0.7.post1+）
+
+`A2AAgent` 是 [A2A 1.0 协议](https://a2a-protocol.org/)远程 agent 的客户端适配器：
+不继承 `Agent`、无本地模型/工具/推理循环，但提供同风格接口（`reply` / `reply_stream` /
+`observe`），可传入 `launch_console` 像本地 agent 一样对话。需安装 `pip install "agentscope[a2a]"`：
+
+```python
+import httpx
+from a2a.client import A2ACardResolver
+from agentscope.agent import A2AAgent
+from agentscope.message import UserMsg
+
+async with httpx.AsyncClient() as httpx_client:
+    card = await A2ACardResolver(
+        httpx_client=httpx_client, base_url="http://127.0.0.1:9999",
+    ).get_agent_card()
+
+async with A2AAgent(card) as agent:
+    reply = await agent.reply(UserMsg("user", "你好"))
+    # 再次 reply 自动复用远端 context_id；A2AAgentState 可持久化续接会话
+```
+
+远端 Task 的等待输入/取消/失败映射为 `COMPLETED`/`INTERRUPTED`/`ERROR`，详情见
+[references/agent-events.md](references/agent-events.md)。
 
 ## 消息创建
 

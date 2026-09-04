@@ -152,8 +152,8 @@ context_config = ContextConfig(
 | `ThinkingBlockStartEvent` | 推理块开始 |
 | `ThinkingBlockDeltaEvent` | 推理增量 |
 | `ThinkingBlockEndEvent` | 推理块结束 |
-| `DataBlockStartEvent` | 数据块开始（含 media_type，如音频流） |
-| `DataBlockDeltaEvent` | 数据增量（base64） |
+| `DataBlockStartEvent` | 数据块开始（含 media_type，如音频流；v2.0.7.post1+ 另含 `name` 文件名） |
+| `DataBlockDeltaEvent` | 数据增量（v2.0.7.post1+ 起 `data` base64 与 `url` 二选一且必给其一，如 A2A 远端返回的 URL 数据块） |
 | `DataBlockEndEvent` | 数据块结束 |
 | `HintBlockEvent` | 提示块事件 |
 | `ToolCallStartEvent` | 工具调用开始（含 tool_call_id, tool_call_name） |
@@ -339,6 +339,85 @@ await agent.reply(UserInterruptEvent(reply_id="原reply_id"))
 >   清理后重新抛出，便于上层捕获）。
 >
 > 服务化场景下，HTTP 端 `POST /sessions/{sid}/interrupt` 会派发 `UserInterruptEvent`。
+
+## A2AAgent — A2A 协议远程智能体（v2.0.7.post1+）
+
+`agentscope.agent.A2AAgent` 是 [A2A 1.0 协议](https://a2a-protocol.org/)远程 agent 的
+**有状态客户端适配器**：提供与 `Agent` 相同风格的交互方法（`reply` / `reply_stream` /
+`observe` / `compress_context`），但**不继承** `Agent`——本地没有模型、工具与推理循环，
+全部委托给远端 A2A 服务，适配器只持有远端会话（`context_id`）与待续任务（`task_id`），
+存在 `A2AAgentState`（`agentscope.state`）中。
+
+需要安装 A2A extra（引入 `a2a-sdk`）：
+
+```bash
+pip install "agentscope[a2a]"
+```
+
+### 基本用法
+
+```python
+import httpx
+from a2a.client import A2ACardResolver
+
+from agentscope.agent import A2AAgent
+from agentscope.message import UserMsg
+
+# 先解析远端 Agent Card
+async with httpx.AsyncClient() as httpx_client:
+    card = await A2ACardResolver(
+        httpx_client=httpx_client,
+        base_url="http://127.0.0.1:9999",
+    ).get_agent_card()
+
+# 适配器持有自己的 A2A client，退出 async with 时关闭（关闭后不可复用）
+async with A2AAgent(card) as agent:
+    reply = await agent.reply(UserMsg("user", "规划一个杭州周末行程。"))
+    print(reply.get_text_content())
+
+    # 第二次 reply 自动复用同一远端 context（context_id）
+    reply = await agent.reply(UserMsg("user", "改成适合带孩子的版本。"))
+```
+
+- 构造参数：`A2AAgent(agent_card, *, client=None, state=None)`
+  - `agent_card`：`a2a.types.AgentCard`，其 `name` 成为适配器的 `name`；缺省 `client` 时按
+    card 构建流式 JSONRPC / HTTP+JSON 客户端（SDK 自动选择 card 广告的最新协议版本，
+    仅支持 A2A 0.3 时回退兼容传输）。
+  - `client`：可传入自定义 `a2a.client.Client`（如 gRPC 传输或自定义鉴权）；无论哪种，
+    适配器都持有并负责在 `aclose()` 关闭。
+  - `state`：传入 `A2AAgentState` 恢复早前会话（如 `A2AAgentState(context_id=存好的id)`）。
+- `reply(inputs)` / `reply_stream(inputs, yield_final_msg=False)` 与 `Agent` 同义；
+  输入为 `Msg | list[Msg]`（至少一条），内部把整轮所有消息块展平为一条 A2A 用户 Message。
+- `observe(msgs)`：缓存消息，在下一次 `reply` 的输入前一并发送。
+- `compress_context()`：空操作（仅告警日志）——远端服务自管上下文压缩。
+- `launch_console(agent)` 可直接传入 `A2AAgent` 交互调试（见终端控制台一节）。
+
+### 远端任务（Task）生命周期映射
+
+远端 Task 在服务端挂起时本地并无挂起——每次响应流都正常结束 reply，结束时 Task 状态
+决定 `finished_reason`：
+
+| 远端 Task 状态 | finished_reason | 说明 |
+|---|---|---|
+| `COMPLETED` / `INPUT_REQUIRED` / `AUTH_REQUIRED` | `COMPLETED` | Task 的状态消息作为普通内容发出，远端的追问就在回复里——用下一次 `reply()` 回答它 |
+| `CANCELED` | `INTERRUPTED` | |
+| `FAILED` / `REJECTED`（或流停在 SUBMITTED/WORKING 未决） | `ERROR` | |
+
+`state.task_id` 仅在服务端等待输入（`INPUT_REQUIRED` / `AUTH_REQUIRED`）时保留，此时
+下一条消息**续同一 Task**；其余结果清空，下一条消息在同一 `context_id` 内开新 Task。
+服务端已遗忘的 Task 自动降级为新 Task；仍在运行的 Task 会抛 `RuntimeError`（重发会
+导致它被执行两次）。`AUTH_REQUIRED` 的凭证走带外通道，无法经此适配器审批。
+
+### 内容块映射与限制
+
+A2A 的每个 Part 映射为一个内容块：text Part → `TextBlock`，raw 字节 / URL Part →
+`DataBlock`（块结束事件的 `metadata["a2a"]` 携带来源 id，最终消息 metadata 含 `context_id`）。
+双向均只支持 text / raw / URL——结构化数据 Part、thinking / tool / hint 块与
+push notifications 不支持。
+
+> 把本地 `Agent` 暴露为 A2A 服务端：框架不提供内置封装，可用 `a2a-sdk` 的
+> `AgentExecutor` 自行包装（官方示例 `examples/a2a/server.py` 展示了把流式
+> `TextBlockDeltaEvent` 发布为 artifact 块、按 `context_id` 隔离会话的完整写法）。
 
 ## 终端控制台 (Console)
 
