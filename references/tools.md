@@ -95,7 +95,7 @@ toolkit = Toolkit(tools=[FunctionTool(add_numbers)])
 - v2.0.7+ 支持传入 `input_schema` 覆盖自动生成的 schema：JSON schema dict 或 pydantic `BaseModel` 子类
   （经 `model_json_schema()` 转换并移除 `title` 字段）；为 `None`（默认）时仍从函数签名/docstring 生成，
   约束（枚举、取值范围等）用 `typing.Literal` 或 `typing.Annotated[int, Field(ge=0, le=10)]` 表达。
-- v2.0.7.post1+ 支持构造参数 `permission=PermissionDecision(behavior=..., message=...)`
+- v2.0.8 支持构造参数 `permission=PermissionDecision(behavior=..., message=...)`
   直接指定权限决策；不传时默认 `ASK`（要求用户确认，见 permissions 文档）。
 
 **方式 2：继承 ToolBase — 需要权限检查/状态注入等高级能力**
@@ -219,7 +219,15 @@ schemas = await toolkit.get_tool_schemas(groups=["browser"])  # 指定组
 # 执行工具
 async for chunk_or_response in toolkit.call_tool(tool_call_block, agent_state):
     ...
+```
 
+> ℹ️ v2.0.8：执行前会对 LLM 生成的工具参数做 **schema 引导修复**（`json_repair[schema]`）——
+> JSON 语法错误与参数类型错误（如 schema 要求 number 却给了 `"42"`）都会尽量按工具
+> `input_schema` 自动修复。修复是 best-effort：无法修复的参数原样保留、由后续 schema
+> 校验给出报错；`NaN`/`Infinity` 不视为合法数字；`additionalProperties: false` 下丢弃参数
+> 属于重写而非修复，不会执行。
+
+```python
 # 查询工具
 tool = await toolkit.get_tool("bash")
 tool = await toolkit.check_tool_available("bash", activated_groups=["basic"])

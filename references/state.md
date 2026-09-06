@@ -106,7 +106,7 @@ class TaskContext(BaseModel):
 
 任务通过内置工具 `TaskCreate`/`TaskGet`/`TaskList`/`TaskUpdate` 管理，Agent 可自动跟踪任务进度。
 
-## A2AAgentState（v2.0.7.post1+）
+## A2AAgentState（v2.0.8）
 
 `A2AAgent`（A2A 协议远程智能体适配器，见 [agent-events.md](agent-events.md)）的状态，
 同样是 Pydantic BaseModel，从 `agentscope.state` 导出：

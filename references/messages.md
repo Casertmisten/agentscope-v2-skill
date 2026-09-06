@@ -131,6 +131,7 @@ msg.has_content_blocks("tool_call")   # 检查是否包含指定类型
 msg.has_content_blocks(["tool_call", "tool_result"])  # 支持列表
 msg.get_content_blocks("text")        # 获取指定类型的 block 列表
 msg.append_event(event)               # 从事件流更新消息（流式场景）
+msg.append_usage(usage)               # 累计一次模型调用的 token 用量（v2.0.8）
 ```
 
 ## Usage 类

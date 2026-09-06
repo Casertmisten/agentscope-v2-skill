@@ -1,6 +1,6 @@
 # Pipeline 流水线 — v2
 
-`agentscope.pipeline` 模块（v2.0.7.post1+）：把多个 agent 按固定逻辑编排成一个整体，对外暴露
+`agentscope.pipeline` 模块（v2.0.8）：把多个 agent 按固定逻辑编排成一个整体，对外暴露
 与 `Agent` 相同的事件流接口（`reply_stream`），可以传给 `launch_console` 等任何接受 agent 的地方。
 
 ```python
@@ -12,7 +12,7 @@ from agentscope.pipeline import GoalPipeline, PipelineProtocol
 协议很简单：实现 `reply_stream(inputs) -> AsyncGenerator[AgentEvent | Msg, None]` 即可
 （声明为普通 `def` 返回异步生成器，与 `Agent.reply_stream` 的形态一致）。满足该协议的对象
 （Agent 或任意 pipeline）可以互换使用——`launch_console(agent=...)` 等接口接受的类型是
-`Agent | PipelineProtocol`（v2.0.7.post1+）。
+`Agent | PipelineProtocol`（v2.0.8）。
 
 ## GoalPipeline — 执行者-校验者循环
 

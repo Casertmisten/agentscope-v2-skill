@@ -30,7 +30,7 @@ A2A 协议远程智能体（A2AAgent 客户端适配器 + A2AAgentState，连接
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
 
-AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.7.post1`（main 分支，v2.0.7 发布后合入的变更标注 v2.0.7.post1+）。
+AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.8`。
 
 **核心特性**：事件驱动架构、权限系统（含 on_check_permission 中间件 hook、批量确认豁免、
 DEFAULT/DONT_ASK 只读快路径）、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
@@ -46,13 +46,13 @@ Embedding/TTS 多模态模型（Embedding v2.0.3 重构为泛型基类，dimensi
 TTS 含 OpenAITTSModel / DashScopeTTSModel / DashScopeRealtimeTTSModel / DashScopeCosyVoiceTTSModel / GeminiTTSModel）、
 RAG 知识库（agentscope.rag：KnowledgeBase + QdrantStore + MilvusLiteStore（v2.0.4+）+ MongoDBStore（v2.0.4+）
 + ElasticsearchStore（v2.0.5+）+ Parser/Chunker 索引管线 + RAGMiddleware static/agentic 双模式
-+ LLM 重排序 rerank_model，v2.0.7.post1+）、
++ LLM 重排序 rerank_model，v2.0.8）、
 SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影 + AgentInvite 邀请已有 agent 入队）、
 服务化知识库（KnowledgeBaseManager + LocalBlobStore/S3BlobStore + 内嵌或独立索引 worker）、
 Session Status 统一状态查询端点（v2.0.4+）、Agent 中断机制（UserInterruptEvent，v2.0.4+）、
 回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR，v2.0.5+）、
 Agent 结构化输出（structured_schema，v2.0.5+）、运行时状态注入（InjectionConfig，v2.0.5+；
-重复工具错误提醒与 agent 自主上下文压缩工具 CompressContext 为 v2.0.7.post1+）、
+重复工具错误提醒与 agent 自主上下文压缩工具 CompressContext 为 v2.0.8）、
 跨用户资源共享（ResourceAccessPolicy 抽象，group/org 场景）、
 Workspace 新增 AppleContainerWorkspace / BubblewrapWorkspace（v2.0.5+）、Windows PowerShell 工具（v2.0.5+）、
 skill 路径支持 `~` 展开（v2.0.5+）、Hub 注册中心（GitHubMCPHub / ClawSkillHub，v2.0.5+，
@@ -75,13 +75,17 @@ Skill 按 agent 隔离（`skills/.seed` 模板 + 每 agent 一个分区，惰性
 `purge_agent` 清理，`list/add/remove_skill` 带 `agent_id`，v2.0.6+）、
 终端控制台 console（`launch_console` 交互式终端对话：自动渲染流式回复、处理工具调用 y/n 确认、Ctrl+C 中断当前 reply；
 `ConsoleRenderer` 被动事件渲染器，可嵌入自定义循环消费 `reply_stream`；试运行 / 调试首选入口，无 session 与持久化；
-v2.0.7.post1+ `agent` 参数接受 `Agent | PipelineProtocol`）、
+v2.0.8 `agent` 参数接受 `Agent | PipelineProtocol`）、
 Pipeline 流水线（`GoalPipeline` 执行者-校验者目标达成循环：executor 产出执行报告 → verifier 结构化验收
-pass/fail/impossible → fail 带反馈重试至 `max_iters`；支持 HITL 暂停恢复，对外暴露与 Agent 相同的事件流，v2.0.7.post1+）、
-达到 `max_iters` 后强制一次无工具的最终文本总结再结束（总结消息 `finished_reason=EXCEED_MAX_ITERS`，v2.0.7.post1+）、
+pass/fail/impossible → fail 带反馈重试至 `max_iters`；支持 HITL 暂停恢复，对外暴露与 Agent 相同的事件流，v2.0.8）、
+达到 `max_iters` 后强制一次无工具的最终文本总结再结束（总结消息 `finished_reason=EXCEED_MAX_ITERS`，v2.0.8）、
 A2A 协议远程智能体（`A2AAgent`：A2A 1.0 远端 agent 的有状态客户端适配器，不继承 Agent，
 提供 reply/reply_stream/observe 同风格接口，`agentscope[a2a]` extra；`A2AAgentState` 持有
-context_id/task_id 支持会话续接与 Task 续跑，DataBlock 事件新增 `name` 与 `data`/`url` 二选一，v2.0.7.post1+）、
+context_id/task_id 支持会话续接与 Task 续跑，DataBlock 事件新增 `name` 与 `data`/`url` 二选一，v2.0.8）、
+工具参数 schema 引导修复（`Toolkit` 执行前按工具 `input_schema` 自动修复 LLM 给错的参数类型，
+如 `{"n": "42"}` → `{"n": 42}`；无法修复的参数原样保留交回校验报错，v2.0.8）、
+RAG 检索分数统一 higher-is-better（距离度量的后端返回取负后的距离，`score_threshold` 在距离度量下为负值，v2.0.8）、
+`Msg.append_usage` 累计 token 用量公共方法（上下文压缩调用的开销也计入 context 尾部消息的 usage，v2.0.8）、
 on_reply 中间件可吞掉 `ReplyEndEvent` 续跑回复循环（v2.0.6+，最终 `Msg` 仅在事件逃出中间件链后产生；
 `ExceedMaxItersEvent` 同步 deprecated，改查 `ReplyEndEvent.finished_reason`）、
 MCP 有状态客户端支持 close 后重连（v2.0.6+）、
@@ -120,7 +124,7 @@ Agent (单一类，reply_stream 返回事件流，reply 返回最终消息)
 | Agent | AgentBase/ReActAgentBase/ReActAgent | 单一 `Agent` 类 |
 | 记忆 | MemoryBase/InMemoryMemory/RedisMemory | `AgentState.context` (list[Msg]) |
 | 格式化器 | FormatterBase/ChatFormatter 等 | `formatter` 模块存在，但由各 model 实现内部使用，Agent 无需手动选 |
-| 管道 | MsgHub/SequentialPipeline/FanoutPipeline | `pipeline` 模块全新设计：`GoalPipeline` 执行者-校验者循环（v2.0.7.post1+），其余编排直接用 asyncio |
+| 管道 | MsgHub/SequentialPipeline/FanoutPipeline | `pipeline` 模块全新设计：`GoalPipeline` 执行者-校验者循环（v2.0.8），其余编排直接用 asyncio |
 | 工具 | 普通函数 + Toolkit | `ToolBase` 子类 + `Toolkit` |
 | MCP | HttpStatefulClient/StatelessClient 等 | 统一 `MCPClient` |
 | 消息 | Msg(name, role, content) | `UserMsg/AssistantMsg/SystemMsg` 工厂函数 |
@@ -244,7 +248,7 @@ agent = Agent(
     ),
     react_config=ReActConfig(           # ReAct 循环配置
         max_iters=50,                   # 最大迭代次数（v2.0.7+ 默认 50，此前为 20）
-        # v2.0.7.post1+：达到上限且尚无最终消息时，先注入提示并禁用工具强制一次
+        # v2.0.8：达到上限且尚无最终消息时，先注入提示并禁用工具强制一次
         # 最终文本总结，再以 finished_reason=EXCEED_MAX_ITERS 结束
         stop_on_reject=False,
     ),
@@ -313,7 +317,7 @@ async for event in agent.reply_stream(user_msg):
 from agentscope.console import launch_console, ConsoleRenderer
 ```
 
-**`launch_console`** — 一行启动交互式对话：从 stdin 读输入，自动渲染流式回复，agent 请求确认时提示 `y/n`，`Ctrl+C` 中断当前 reply（再 `Ctrl+C` 或输入 `exit` 退出）。无 session 管理、无持久化，对话仅存于 `agent.state`，随进程结束。`agent` 参数也可传 pipeline（`Agent | PipelineProtocol`，v2.0.7.post1+）：
+**`launch_console`** — 一行启动交互式对话：从 stdin 读输入，自动渲染流式回复，agent 请求确认时提示 `y/n`，`Ctrl+C` 中断当前 reply（再 `Ctrl+C` 或输入 `exit` 退出）。无 session 管理、无持久化，对话仅存于 `agent.state`，随进程结束。`agent` 参数也可传 pipeline（`Agent | PipelineProtocol`，v2.0.8）：
 
 ```python
 agent = Agent(name="Friday", system_prompt="...", model=model, toolkit=toolkit)
@@ -333,7 +337,7 @@ print(renderer.last_msg)             # 累积出的 Msg
 `verbosity`：`"quiet"` 仅回复文本与错误；`"default"` 额外含思考、工具调用/结果、提示块、token 用量、HITL 通知；`"debug"` 再加生命周期等默认不可见事件。详情见
 [references/agent-events.md](references/agent-events.md)。
 
-## Pipeline 流水线（v2.0.7.post1+）
+## Pipeline 流水线（v2.0.8）
 
 `agentscope.pipeline` 把多个 agent 按固定逻辑编排成整体，对外暴露与 `Agent` 相同的
 `reply_stream` 事件流，可直接传给 `launch_console` 等接受 agent 的接口：
@@ -354,7 +358,7 @@ await launch_console(pipe)    # 交互式调试整个流水线
 executor / verifier 通常共享同一个 Workspace（verifier 才能读到 executor 的产物）。详情见
 [references/pipeline.md](references/pipeline.md)。
 
-## A2A 远程智能体（v2.0.7.post1+）
+## A2A 远程智能体（v2.0.8）
 
 `A2AAgent` 是 [A2A 1.0 协议](https://a2a-protocol.org/)远程 agent 的客户端适配器：
 不继承 `Agent`、无本地模型/工具/推理循环，但提供同风格接口（`reply` / `reply_stream` /
@@ -531,7 +535,7 @@ res = await agent.reply(
 ## 运行时状态注入（v2.0.5+）
 
 Agent 默认在每轮推理前把**当前墙钟时间、任务状态、上下文压缩临近预警、重复工具错误提醒**
-（最后者为 v2.0.7.post1+ 新增）作为 `HintBlock` 注入 `state.context`（不改 system prompt，
+（最后者为 v2.0.8 新增）作为 `HintBlock` 注入 `state.context`（不改 system prompt，
 避免破坏 prompt caching）。由 `InjectionConfig` 控制：
 
 ```python
@@ -545,16 +549,16 @@ agent = Agent(
         inject_runtime_state=True,   # 默认开启
         timezone="Asia/Shanghai",
         time_interval=0.5,           # 距上次注入超过 0.5 小时再注入时间
-        tool_retries_limit=3,        # v2.0.7.post1+：同名同参调用连续失败 N 次注入提醒
+        tool_retries_limit=3,        # v2.0.8：同名同参调用连续失败 N 次注入提醒
     ),
 )
 # 关闭：InjectionConfig(inject_runtime_state=False)
 ```
 
-约束：`ContextConfig.context_buffer_ratio`（v2.0.7.post1+ 自 InjectionConfig 迁入，原字段
+约束：`ContextConfig.context_buffer_ratio`（v2.0.8 自 InjectionConfig 迁入，原字段
 deprecated 但传值仍生效）必须 < `ContextConfig.trigger_ratio`，否则构造报错。
 
-v2.0.7.post1+：`ContextConfig(compression_tool_enabled=True)` 可向 agent 暴露内置
+v2.0.8：`ContextConfig(compression_tool_enabled=True)` 可向 agent 暴露内置
 `CompressContext` 工具，配合注入预警让 agent 在任务间隙**自主**压缩上下文（详见
 [references/agent-events.md](references/agent-events.md)）。
 

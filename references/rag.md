@@ -284,7 +284,7 @@ kb = KnowledgeBase(
 - **索引与检索必须用同一个 embedding 模型**,否则向量不可比。
 - `insert_document` 时 chunk 元数据合并优先级(高者覆盖低者):`metadata_filter` 键(安全边界) > chunk 自身 metadata(解析器写入) > `document_metadata`(文档级,如 filename)。
 - `metadata_filter`(多租户隔离):检索/列出**强制**按该过滤;插入**强制**写入这些键——防止解析器 bug 或恶意内容把记录塞进别的租户作用域。`None`(默认)表示该知识库独占 collection。
-- 检索返回的 `VectorSearchResult`:`score`(相似度,余弦/点积越高越相似,L2 越低越相似)+ `document_id` + `chunk`。
+- 检索返回的 `VectorSearchResult`:`score`(相关性,统一 **higher-is-better**——距离度量的后端如 L2 返回取负后的距离,v2.0.8)+ `document_id` + `chunk`。分数仅在同一 store 的同一度量内可比。
 - `list_chunks` 底层对应 `VectorStoreBase.list_chunks`——特意**非抽象方法**(避免破坏既有第三方子类),未实现的后端抛 `NotImplementedError`;内置 Qdrant/MilvusLite/MongoDB/Elasticsearch 四个后端均已支持。
 
 ### 完整索引 + 检索示例
@@ -358,14 +358,14 @@ mw = RAGMiddleware(
     parameters=RAGMiddleware.Parameters(  # None 用默认(agentic, top_k=5)
         mode="agentic",            # "agentic" | "static"
         top_k=5,                   # 1-50,跨所有 KB 合并后的最大返回数
-        score_threshold=None,      # 最低相似度,None 不过滤
+        score_threshold=None,      # 最低相关性,None 不过滤(距离度量下为负值)
         emit_hint_event=True,      # static 模式:发 HintBlockEvent 供前端展示
         persist_hint=False,        # static 模式:True 则注入的 hint 保留在上下文中
         # hint_template="...{context}...",  # 必须含且仅含一个 {context}(默认有内置模板)
-        # rerank_candidate_k=10,   # v2.0.7.post1+：供 rerank 模型评判的候选数
-        # rerank_prompt="...",     # v2.0.7.post1+：rerank 指令模板({query}/{top_k} 占位符)
+        # rerank_candidate_k=10,   # v2.0.8：供 rerank 模型评判的候选数
+        # rerank_prompt="...",     # v2.0.8：rerank 指令模板({query}/{top_k} 占位符)
     ),
-    # rerank_model=llm,            # v2.0.7.post1+：LLM 重排序模型(ChatModelBase 实例)
+    # rerank_model=llm,            # v2.0.8：LLM 重排序模型(ChatModelBase 实例)
 )
 
 agent = Agent(
@@ -381,14 +381,14 @@ agent = Agent(
 |---|---|---|
 | `mode` | `"agentic"` | 检索触发方式 |
 | `top_k` | `5` | 每次检索返回的最大 chunk 数(跨所有 KB 合并后),范围 1-50 |
-| `score_threshold` | `None` | 最低相似度,仅对余弦/点积有意义 |
+| `score_threshold` | `None` | 最低 score 过滤阈值,尺度随 store 度量(距离度量下为负值,v2.0.8 语义统一) |
 | `emit_hint_event` | `True` | static 模式下发 `HintBlockEvent`,前端可展示命中片段 |
 | `persist_hint` | `False` | static 模式下是否保留注入的 hint(默认模型调用后即移除,避免污染下一轮) |
 | `hint_template` | 内置 | 包裹检索结果的模板,须含**且仅含一个** `{context}` 占位符,否则校验报错 |
-| `rerank_candidate_k` | `None` | v2.0.7.post1+：供 rerank 模型评判的候选 chunk 数(≥top_k,默认 2×top_k,上限 50);未配置 rerank 模型时忽略 |
-| `rerank_prompt` | 内置 | v2.0.7.post1+：rerank 指令模板,含 `{query}` 与可选 `{top_k}` 占位符,候选内容由中间件追加 |
+| `rerank_candidate_k` | `None` | v2.0.8：供 rerank 模型评判的候选 chunk 数(≥top_k,默认 2×top_k,上限 50);未配置 rerank 模型时忽略 |
+| `rerank_prompt` | 内置 | v2.0.8：rerank 指令模板,含 `{query}` 与可选 `{top_k}` 占位符,候选内容由中间件追加 |
 
-### LLM 重排序（v2.0.7.post1+）
+### LLM 重排序（v2.0.8）
 
 构造时传 `rerank_model`(任意 `ChatModelBase` 实例)即启用:检索扩宽到
 `rerank_candidate_k`(默认 2×`top_k`,上限 50)条候选,由 LLM 从中挑出最终 `top_k` 条,
@@ -418,7 +418,7 @@ agent = Agent(
 
 ### 多 KB(不同 embedding 模型)注意事项
 
-一个 `RAGMiddleware` 可绑定用不同 embedding 模型的 KB,各 KB 独立 embed、独立检索。但**不同 embedding 模型的分数不可严格比较**——当前实现按原始 score 排序合并。若部署中这种差异很重要,建议改用 rank-based 融合(如 RRF);每个 `kb.search` 本身已返回有序结果。配置 `rerank_model`(v2.0.7.post1+)后由 LLM 评判相关性,不再依赖跨 KB 分数可比,也可缓解该问题。
+一个 `RAGMiddleware` 可绑定用不同 embedding 模型的 KB,各 KB 独立 embed、独立检索。但**不同 embedding 模型的分数不可严格比较**——当前实现按原始 score 排序合并。若部署中这种差异很重要,建议改用 rank-based 融合(如 RRF);每个 `kb.search` 本身已返回有序结果。配置 `rerank_model`(v2.0.8)后由 LLM 评判相关性,不再依赖跨 KB 分数可比,也可缓解该问题。
 
 ### 接入 Agent 完整示例(static + agentic)
 

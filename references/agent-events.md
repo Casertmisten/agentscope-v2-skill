@@ -81,7 +81,7 @@ await agent.compress_context(context_config=ContextConfig(trigger_ratio=0.5))
 await agent.compress_context(instructions=HintBlock(hint="保留 API 迁移决策"))
 ```
 
-> 除自动压缩外，v2.0.7.post1+ 还可让 agent 通过内置 `CompressContext` 工具自主压缩，
+> 除自动压缩外，v2.0.8 还可让 agent 通过内置 `CompressContext` 工具自主压缩，
 > 见下文 ContextConfig 章节。
 
 ## ReActConfig
@@ -89,7 +89,7 @@ await agent.compress_context(instructions=HintBlock(hint="保留 API 迁移决�
 ```python
 react_config = ReActConfig(
     max_iters=50,            # 推理-行动最大迭代次数（v2.0.7+ 默认 50，此前为 20）
-    # v2.0.7.post1+：达到 max_iters 且尚无最终消息时，会注入 system-reminder 并以
+    # v2.0.8：达到 max_iters 且尚无最终消息时，会注入 system-reminder 并以
     # tool_choice=none 强制一次「无工具最终总结」调用，产出文本总结后再结束
     # （finished_reason 仍为 EXCEED_MAX_ITERS，见下文）
     stop_on_reject=False,    # 工具被拒绝时是否停止
@@ -120,13 +120,13 @@ context_config = ContextConfig(
     compression_prompt="...", # 自定义压缩提示
     summary_template="...",   # 自定义摘要模板
     summary_schema={...},     # 自定义摘要 JSON Schema（默认使用 SummarySchema）
-    context_buffer_ratio=0.2, # 压缩预警 buffer 区宽度（v2.0.7.post1+ 自 InjectionConfig 迁入）
-    compression_tool_enabled=False,   # v2.0.7.post1+：暴露 CompressContext 工具给 agent
-    compression_fallback_to_truncation=True,  # v2.0.7.post1+：摘要生成失败时是否回退截断
+    context_buffer_ratio=0.2, # 压缩预警 buffer 区宽度（v2.0.8 自 InjectionConfig 迁入）
+    compression_tool_enabled=False,   # v2.0.8：暴露 CompressContext 工具给 agent
+    compression_fallback_to_truncation=True,  # v2.0.8：摘要生成失败时是否回退截断
 )
 ```
 
-### agent 自主上下文压缩工具（v2.0.7.post1+）
+### agent 自主上下文压缩工具（v2.0.8）
 
 `ContextConfig(compression_tool_enabled=True)` 后，Agent 会注册内置工具
 `CompressContext`（权限恒 ALLOW）：配合运行时状态注入，当 token 用量进入
@@ -135,6 +135,10 @@ context_config = ContextConfig(
 被动压缩。上下文不够长时调用则原样保留并返回提示；摘要生成失败时工具返回错误
 （是否回退截断由 `compression_fallback_to_truncation` 控制，关闭后改为抛错、
 上下文保持原样）。
+
+> ℹ️ v2.0.8：压缩调用（含上述工具触发的自主压缩）的 token 开销现在也计入统计——
+> 累加到 context 尾部消息的 `usage` 上（整个上下文被压缩时挂到一条被格式化器跳过的
+> 空消息），可通过 `Msg.append_usage` 查看。
 
 ## 事件系统 (Event)
 
@@ -152,8 +156,8 @@ context_config = ContextConfig(
 | `ThinkingBlockStartEvent` | 推理块开始 |
 | `ThinkingBlockDeltaEvent` | 推理增量 |
 | `ThinkingBlockEndEvent` | 推理块结束 |
-| `DataBlockStartEvent` | 数据块开始（含 media_type，如音频流；v2.0.7.post1+ 另含 `name` 文件名） |
-| `DataBlockDeltaEvent` | 数据增量（v2.0.7.post1+ 起 `data` base64 与 `url` 二选一且必给其一，如 A2A 远端返回的 URL 数据块） |
+| `DataBlockStartEvent` | 数据块开始（含 media_type，如音频流；v2.0.8 另含 `name` 文件名） |
+| `DataBlockDeltaEvent` | 数据增量（v2.0.8 起 `data` base64 与 `url` 二选一且必给其一，如 A2A 远端返回的 URL 数据块） |
 | `DataBlockEndEvent` | 数据块结束 |
 | `HintBlockEvent` | 提示块事件 |
 | `ToolCallStartEvent` | 工具调用开始（含 tool_call_id, tool_call_name） |
@@ -306,7 +310,7 @@ await agent.reply(UserInterruptEvent(reply_id="原reply_id"))
 |---|---|
 | `completed` | 正常完成 |
 | `interrupted` | 被 `UserInterruptEvent` 中断 |
-| `exceed_max_iters` | 超过 `ReActConfig.max_iters`（v2.0.7.post1+ 会先强制一次无工具的最终文本总结，总结消息也以此 reason 结束） |
+| `exceed_max_iters` | 超过 `ReActConfig.max_iters`（v2.0.8 会先强制一次无工具的最终文本总结，总结消息也以此 reason 结束） |
 | `error`（v2.0.5+） | reply 过程抛异常，`error: ErrorInfo` 字段填充错误分类 |
 
 > v2.0.5+：reply 出错时不再静默崩溃——`Msg` 和 `ReplyEndEvent` 都会带上 `finished_reason=ERROR`
@@ -322,7 +326,7 @@ await agent.reply(UserInterruptEvent(reply_id="原reply_id"))
 > `ReplyEndEvent`；`on_reply` 中间件可吞掉后者续跑（见
 > [middleware-workspace.md](middleware-workspace.md)）。
 >
-> v2.0.7.post1+：达到 `max_iters` 的行为变为**先总结再退出**——推理-行动迭代预算用尽且尚无
+> v2.0.8：达到 `max_iters` 的行为变为**先总结再退出**——推理-行动迭代预算用尽且尚无
 > 最终消息时，Agent 注入一条 system-reminder（`HintBlock`，source 为
 > `{"label": "System", "sublabel": "Max Iterations Reached"}`，要求总结已有工作与发现、
 > 直接给出最终答案），并以 `tool_choice=none` 强制最后一次模型调用；这次总结消息的
@@ -340,7 +344,7 @@ await agent.reply(UserInterruptEvent(reply_id="原reply_id"))
 >
 > 服务化场景下，HTTP 端 `POST /sessions/{sid}/interrupt` 会派发 `UserInterruptEvent`。
 
-## A2AAgent — A2A 协议远程智能体（v2.0.7.post1+）
+## A2AAgent — A2A 协议远程智能体（v2.0.8）
 
 `agentscope.agent.A2AAgent` 是 [A2A 1.0 协议](https://a2a-protocol.org/)远程 agent 的
 **有状态客户端适配器**：提供与 `Agent` 相同风格的交互方法（`reply` / `reply_stream` /
@@ -449,7 +453,7 @@ asyncio.run(main())
 
 ```python
 await launch_console(
-    agent: Agent | PipelineProtocol,   # v2.0.7.post1+ 也可传 pipeline（如 GoalPipeline）
+    agent: Agent | PipelineProtocol,   # v2.0.8 也可传 pipeline（如 GoalPipeline）
     user_name: str = "user",            # 用户消息 name，兼作输入提示符
     verbosity: Verbosity = "default",   # "quiet" | "default" | "debug"
     max_tool_result_lines: int | None = 20,  # 打印工具结果时的截断行数；None 不截断
@@ -535,7 +539,7 @@ async for item in agent.reply_stream(
 
 Agent 默认在每个 reasoning 步骤前，把**当前墙钟时间、(plan) 任务状态、上下文压缩临近预警、
 重复工具错误提醒**作为 `HintBlock` 追加到 `state.context`（不改 system prompt，避免破坏
-prompt caching；工具错误提醒为 v2.0.7.post1+ 新增）。
+prompt caching；工具错误提醒为 v2.0.8 新增）。
 由 `InjectionConfig` 控制，从 `agentscope.agent` 导出：
 
 ```python
@@ -550,14 +554,14 @@ agent = Agent(
         timezone="UTC",               # 时区名；无效/缺 tzdata 时回退 UTC
         time_format="%Y-%m-%dT%H:%M:%S",
         time_interval=0.5,            # 小时；距上次注入超过该值再注入时间
-        # context_buffer_ratio 已 deprecated（v2.0.7.post1+），
+        # context_buffer_ratio 已 deprecated（v2.0.8），
         # 改设在 ContextConfig.context_buffer_ratio；此处传值仍生效并覆盖
         template="...{runtime_state}...",  # 必须含 {runtime_state} 占位符
         task_tool_names=["TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
         emit_hint_event=True,         # 是否发 HintBlockEvent 供前端展示
         extra_fields={},              # 额外注入字段
-        tool_retries_limit=3,         # v2.0.7.post1+：同名同参调用连续失败 N 次触发提示
-        tool_retries_hint="...",      # v2.0.7.post1+：提示模板，支持 {tool_name}/{count}
+        tool_retries_limit=3,         # v2.0.8：同名同参调用连续失败 N 次触发提示
+        tool_retries_hint="...",      # v2.0.8：提示模板，支持 {tool_name}/{count}
     ),
 )
 ```
@@ -566,7 +570,7 @@ agent = Agent(
 - **时间**：context 中无记录时间，或距上次注入超过 `time_interval` 小时。
 - **任务**：存在 pending/in-progress 任务，且 agent 尚未感知（context 里无相关工具调用/注入记录）。
 - **上下文**：reply 第一轮且 token 数进入压缩阈值前的 buffer 区时，提醒 agent 压缩临近。
-- **工具错误**（v2.0.7.post1+）：同一工具+相同参数的调用在末尾连续失败达到
+- **工具错误**（v2.0.8）：同一工具+相同参数的调用在末尾连续失败达到
   `tool_retries_limit`（默认 3）次时，注入 `tool_retries_hint`（支持 `{tool_name}`/
   `{count}` 占位符），提醒 agent 停止原样重试、换一种方式。
 
