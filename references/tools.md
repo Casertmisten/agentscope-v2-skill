@@ -302,6 +302,22 @@ raw = await client.list_raw_tools() # 获取原始 mcp.types.Tool
 > （stdio / streamable HTTP / SSE 均为一次性 context manager，每次连接前重建），断线后可复用
 > 同一 `MCPClient` 实例重新 `connect()`。
 
+### 运行时 headers（v2.0.8+）
+
+`set_runtime_headers` 在不断开连接的情况下替换后续 HTTP 请求的 headers（典型用途：
+token 轮换 / 凭证刷新），仅 Streamable HTTP 客户端支持（stdio / SSE 抛 `ValueError`）：
+
+```python
+# 整体替换而非合并；空 dict 清除运行时覆盖，恢复 HttpMCPConfig.headers 的静态配置
+await client.set_runtime_headers({"authorization": "Bearer <new-token>"})
+```
+
+- 下一次出站请求即生效，无需重连；进行中的调用与已建立的长 GET 流不受影响。
+- MCP 自身按请求设置的 headers（`mcp-session-id`、`content-type` 等）始终优先；
+  httpx 从 URL / body 派生的保留头（`connection` / `content-length` / `host` /
+  `transfer-encoding`）会被直接拒绝（`ValueError`）。
+- 运行时 headers 是实例内存态，不进入 `model_dump` 与 workspace 持久化。
+
 ### 工具过滤
 
 ```python

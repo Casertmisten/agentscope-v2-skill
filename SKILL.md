@@ -89,6 +89,8 @@ RAG 检索分数统一 higher-is-better（距离度量的后端返回取负后�
 on_reply 中间件可吞掉 `ReplyEndEvent` 续跑回复循环（v2.0.6+，最终 `Msg` 仅在事件逃出中间件链后产生；
 `ExceedMaxItersEvent` 同步 deprecated，改查 `ReplyEndEvent.finished_reason`）、
 MCP 有状态客户端支持 close 后重连（v2.0.6+）、
+MCP 运行时 headers（`MCPClient.set_runtime_headers` 不断连替换后续请求 headers，凭证轮换无需重连，
+仅 Streamable HTTP，v2.0.8+）、
 Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）

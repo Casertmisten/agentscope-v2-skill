@@ -844,6 +844,10 @@ await workspace.purge_session(agent_id=agent_id, session_id=session_id)
 - best-effort——任何失败只记日志、不抛异常，因此 workspace 后端不可达也不会回滚已提交的删除。
 - 逐个移除 MCP 不等价：清空的 session 会持久化为 `[]`，会永远留在 `.mcp` 里。
 
+**运行时 headers（v2.0.8+）**：容器/云沙箱 workspace（Docker/E2B/sandbox 等，MCP 经网关代理）
+中的 live MCP 客户端同样支持 `set_runtime_headers()`（需先 `connect()`，否则 `RuntimeError`）；
+`connect()` 注册时会随请求一并携带运行时 headers，因此断线重连后仍然生效。
+
 > 服务化路由的 MCP 端点（`/workspace/mcp/...`）已自动带 `agent_id`/`session_id`；
 > `add_mcp` 重名时返回 **HTTP 409 Conflict**。
 
