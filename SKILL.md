@@ -25,7 +25,12 @@ Anthropic thinking_mode 推理控制 / Channel IM 频道接入钉钉、飞书与
 Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 workspace）、
 终端控制台 console（launch_console 交互式终端对话调试 / ConsoleRenderer 事件流渲染，内置 HITL 工具确认与 Ctrl+C 中断，agent 与 pipeline 均可传入）、
 Pipeline 流水线（GoalPipeline 执行者-校验者目标达成循环，对外暴露与 Agent 相同的 reply_stream 事件流）、
-A2A 协议远程智能体（A2AAgent 客户端适配器 + A2AAgentState，连接任意 A2A 1.0 服务）、set_id_factory 全局 ID 工厂等。
+A2A 协议远程智能体（A2AAgent 客户端适配器 + A2AAgentState，连接任意 A2A 1.0 服务）、
+实时语音智能体（RealtimeAgent 双向音频流 + agentscope.realtime 模块：DashScopeRealtimeModel Qwen-Omni /
+DashScopeAudioRealtimeModel Qwen-Audio / OpenAIRealtimeModel GPT Realtime / GeminiRealtimeModel Live API /
+XAIRealtimeModel Grok Voice 五路适配器 + RealtimeModelCard + LocalAudioTransport 传输 + VAD 话轮检测 +
+TurnAggregator/TurnMetrics，v2.0.8+）、VolcengineChatModel 火山引擎豆包模型
+（VolcengineCredential + thinking_enable/reasoning_effort，v2.0.8+）、set_id_factory 全局 ID 工厂等。
 ---
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
@@ -86,6 +91,12 @@ context_id/task_id 支持会话续接与 Task 续跑，DataBlock 事件新增 `n
 如 `{"n": "42"}` → `{"n": 42}`；无法修复的参数原样保留交回校验报错，v2.0.8）、
 RAG 检索分数统一 higher-is-better（距离度量的后端返回取负后的距离，`score_threshold` 在距离度量下为负值，v2.0.8）、
 `Msg.append_usage` 累计 token 用量公共方法（上下文压缩调用的开销也计入 context 尾部消息的 usage，v2.0.8）、
+实时语音智能体（`agentscope.realtime` 模块 + `RealtimeAgent`：双向音频流、五路 provider 适配器
+DashScope Qwen-Omni/Qwen-Audio、OpenAI GPT Realtime、Gemini Live、xAI Grok Voice，
+LocalAudioTransport 传输、可选 VAD 话轮检测、断线自动重连、`TurnAggregator`/`TurnMetrics`，
+工具调用与 HITL 确认复用 Agent 事件体系，v2.0.8+）、
+火山引擎豆包模型（`VolcengineChatModel` + `VolcengineCredential`，`thinking_enable`/`reasoning_effort`
+思考参数，v2.0.8+）、
 on_reply 中间件可吞掉 `ReplyEndEvent` 续跑回复循环（v2.0.6+，最终 `Msg` 仅在事件逃出中间件链后产生；
 `ExceedMaxItersEvent` 同步 deprecated，改查 `ReplyEndEvent.finished_reason`）、
 MCP 有状态客户端支持 close 后重连（v2.0.6+）、
@@ -116,6 +127,10 @@ Agent (单一类，reply_stream 返回事件流，reply 返回最终消息)
 **多模态（v2.0.2+）**：独立的 `embedding` / `tts` / `formatter` 模块；Credential 统一暴露
 `get_chat_model_class()` / `get_embedding_model_class()` / `get_tts_model_classes()`；Omni 模型可通过
 `DATA_BLOCK_*` 事件流式输出语音，`TTSMiddleware` 可把任意文本回复转语音。
+
+**实时语音（v2.0.8+）**：`agentscope.realtime` 模块（realtime 模型适配器 + 模型卡片 + Transport 传输 + VAD）
+与 `RealtimeAgent` 语音智能体（双向音频流 + 工具调用 + HITL），详见
+[references/realtime.md](references/realtime.md)。
 > ⚠️ TTS / Embedding / Omni 音频 / Realtime 属于官方 Voice Agent 路线（roadmap）的进行中方向，
 > API 可能随版本变动，使用前请以源码为准。
 
@@ -178,6 +193,7 @@ asyncio.run(main())
 | 管理状态 (AgentState) | [references/state.md](references/state.md) |
 | Agent 配置和事件（含结构化输出 / 运行时状态注入 / 错误上报） | [references/agent-events.md](references/agent-events.md) |
 | A2A 协议远程智能体（A2AAgent 客户端适配器 / A2AAgentState） | [references/agent-events.md](references/agent-events.md) |
+| 实时语音（RealtimeAgent / realtime 模型适配器 / Transport / VAD） | [references/realtime.md](references/realtime.md) |
 | Pipeline 流水线（GoalPipeline 执行者-校验者循环） | [references/pipeline.md](references/pipeline.md) |
 | 终端控制台（launch_console 交互调试 / ConsoleRenderer 事件渲染） | [references/agent-events.md](references/agent-events.md) |
 | 权限和工具组（含 on_check_permission hook） | [references/permissions.md](references/permissions.md) |
@@ -384,6 +400,35 @@ async with A2AAgent(card) as agent:
 
 远端 Task 的等待输入/取消/失败映射为 `COMPLETED`/`INTERRUPTED`/`ERROR`，详情见
 [references/agent-events.md](references/agent-events.md)。
+
+## 实时语音 RealtimeAgent（v2.0.8+）
+
+`RealtimeAgent` 是双向流式语音智能体：一侧实时模型、一侧传输（麦克风/扬声器），
+中间是话轮状态机。与 `Agent` 不同，没有请求/应答边界——音频持续流入，事件持续从
+`reply_stream` 流出（仍是 `AgentEvent` 体系，含工具调用与 HITL 确认）：
+
+```python
+from agentscope.agent import RealtimeAgent
+from agentscope.realtime import OpenAIRealtimeModel, LocalAudioTransport
+
+model = OpenAIRealtimeModel(model="gpt-realtime-2.1", credential=credential)
+agent = RealtimeAgent("Friday", "回答简短。", model)
+
+async with agent:                              # 模型会话
+    async with LocalAudioTransport() as t:     # 声卡（需 pip install sounddevice）
+        async for event in agent.reply_stream(t):
+            print(event)                       # 文本增量 / 工具调用 / 确认请求...
+```
+
+- 模型适配器：`DashScopeRealtimeModel`（Qwen-Omni）/ `DashScopeAudioRealtimeModel`（Qwen-Audio，
+  支持文本输入与 smart_turn 端点）/ `OpenAIRealtimeModel`（GPT Realtime）/
+  `GeminiRealtimeModel`（Live API）/ `XAIRealtimeModel`（Grok Voice），
+  统一构造 `(model, credential, parameters, model_card)`；
+- 断线自动重连：provider 关闭会话后，下一句话音触发重连（指数退避，历史 transcript
+  拼进 instructions 恢复上下文）；
+- 可选本地 VAD（`vad=` 参数，开启时关闭 provider 自身话轮检测）、`TurnAggregator`
+  清洗用户话轮、`agent.last_turn_metrics` 查看每轮时延分解；
+- 详情见 [references/realtime.md](references/realtime.md)。
 
 ## 消息创建
 

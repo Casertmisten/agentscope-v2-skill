@@ -56,6 +56,9 @@ await launch_console(pipe)
 - 首次调用 `reply_stream` 传入 `Msg | list[Msg]` 视为新任务，目标就是这次输入，迭代轮数归零。
 - executor / verifier 通常**共享同一个 Workspace**（`offloader=workspace` + `Toolkit(tools=await workspace.list_tools())`），
   verifier 才能读到 executor 写下的产物。
-- 构造签名还有 `verifier_reset_context=True` / `max_retries=3` 两个参数，当前版本仅存储未生效（预留）。
+- 构造签名还有 `verifier_reset_context=True` / `max_retries=3` 两个参数。`verifier_reset_context`
+  已生效（v2.0.8+ 主干）：每轮迭代结束后清空 verifier 的 `context` 与 `summary`（工具缓存、任务状态保留），
+  让每轮验收从干净上下文开始，避免上一轮验收历史污染判断；`max_retries` 为 executor/verifier
+  生成合法结构化输出的重试次数（默认 3）。
 - 结构化输出不合法时，pipeline 会以 system-reminder 提示对应 agent 重新调用
   `GenerateStructuredOutput`。

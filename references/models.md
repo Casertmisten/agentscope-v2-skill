@@ -16,6 +16,7 @@ from agentscope.credential import (
     DeepSeekCredential,
     MoonshotCredential,
     XAICredential,
+    VolcengineCredential,    # v2.0.8+ 火山引擎 Ark
 )
 ```
 
@@ -82,6 +83,7 @@ from agentscope.model import (
     MoonshotChatModel,       # 新增
     OllamaChatModel,
     XAIChatModel,            # 新增
+    VolcengineChatModel,     # v2.0.8+ 火山引擎 Ark（doubao）
 )
 ```
 
@@ -158,6 +160,29 @@ model = AnthropicChatModel(
 
 > ℹ️ 旧参数 `thinking_enable` + `thinking_budget` 仍保留（budget-based `enabled` 模式）。新的 `thinking_mode`
 > 是推荐用法，自动按模式组装 `thinking` 字段（`adaptive`/`disabled` 不带 budget，`enabled` 才带 budget_tokens）。
+
+### Volcengine Chat 模型（v2.0.8+）
+
+`VolcengineChatModel` 接入火山引擎 Ark（doubao 豆包系列），走 OpenAI 兼容协议，
+支持 `client_kwargs` 透传与思考模式参数：
+
+```python
+from agentscope.credential import VolcengineCredential
+from agentscope.model import VolcengineChatModel
+
+credential = VolcengineCredential(api_key="xxx")
+model = VolcengineChatModel(
+    credential=credential,
+    model="doubao-seed-2-1-pro-260628",   # 带版本号的 Ark 模型 ID
+    parameters=VolcengineChatModel.Parameters(
+        thinking_enable=True,             # 思考模式；不设用 Ark 默认 auto
+        reasoning_effort="high",          # minimal | low | medium | high（minimal 关闭推理）
+    ),
+    client_kwargs={"timeout": 60.0},      # 转发给 openai.AsyncClient
+)
+```
+
+配套的 `VolcengineChatFormatter` / `VolcengineMultiAgentFormatter` 由模型内部默认使用，无需手动指定。
 
 ### Omni 模型的音频输出（v2.0.2+）
 

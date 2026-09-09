@@ -152,7 +152,7 @@ context_config = ContextConfig(
 | `ModelCallEndEvent` | 模型调用结束（含 input/output tokens；v2.0.7+ 另含 `cache_input_tokens` / `cache_creation_input_tokens` 缓存命中统计） |
 | `TextBlockStartEvent` | 文本块开始 |
 | `TextBlockDeltaEvent` | 文本增量（`delta` 字段） |
-| `TextBlockEndEvent` | 文本块结束 |
+| `TextBlockEndEvent` | 文本块结束（v2.0.8+ 主干新增可选 `text` 字段：最终文本与 delta 拼接不同时给出定稿，如语音回复被打断时截断为用户实际听到的部分） |
 | `ThinkingBlockStartEvent` | 推理块开始 |
 | `ThinkingBlockDeltaEvent` | 推理增量 |
 | `ThinkingBlockEndEvent` | 推理块结束 |

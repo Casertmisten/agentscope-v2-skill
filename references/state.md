@@ -105,6 +105,8 @@ class TaskContext(BaseModel):
 ```
 
 任务通过内置工具 `TaskCreate`/`TaskGet`/`TaskList`/`TaskUpdate` 管理，Agent 可自动跟踪任务进度。
+v2.0.8+ 主干：`TaskUpdate` 把任务置为 `completed` 时，自动从所有依赖任务的 `blocked_by` 中移除该任务 ID
+（完成的任务不再阻塞依赖方）。
 
 ## A2AAgentState（v2.0.8）
 
