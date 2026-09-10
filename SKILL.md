@@ -5,7 +5,8 @@ description: |
   多智能体开发、基于 AgentScope 构建 agent/智能体应用时使用此 skill。即使用户只是说"写个 agent"、
   "多智能体"、"帮我用 agentscope"也应触发。注意：这是 agentscope-ai/agentscope v2 版本，
   与旧版 modelscope/agentscope 的 API 完全不同（无 memory 模块，pipeline 为 v2 全新设计）。
-涵盖：Agent 创建、Credential/Model 配置、Toolkit/ToolBase 工具注册（含 ToolMiddlewareBase 工具级中间件、Windows PowerShell 工具）、
+涵盖：Agent 创建、Credential/Model 配置、Toolkit/ToolBase 工具注册（含 ToolMiddlewareBase 工具级中间件、Windows PowerShell 工具、
+AskUser 多选提问外部工具）、
 MCPClient 集成、AgentState 状态管理、Event 事件系统、Permission 权限、ToolGroup、Skill 技能系统、
 Middleware 中间件（含 TTSMiddleware / ReplyBudgetControlMiddleware / TracingMiddleware / Mem0Middleware 跨会话长期记忆 /
 ReMeMiddleware 内嵌 ReMe 长期记忆 / AgenticMemoryMiddleware 文件系统长期记忆 / RAGMiddleware 检索增强，及 on_check_permission
@@ -89,6 +90,10 @@ A2A 协议远程智能体（`A2AAgent`：A2A 1.0 远端 agent 的有状态客户
 context_id/task_id 支持会话续接与 Task 续跑，DataBlock 事件新增 `name` 与 `data`/`url` 二选一，v2.0.8）、
 工具参数 schema 引导修复（`Toolkit` 执行前按工具 `input_schema` 自动修复 LLM 给错的参数类型，
 如 `{"n": "42"}` → `{"n": 42}`；无法修复的参数原样保留交回校验报错，v2.0.8）、
+`AskUser` 内置外部工具（多选题向用户收集偏好/澄清意图/做决策：1–4 问题、每题 2–4 选项、
+header/context/preview/multi_select，"Other" 自由输入自动提供；答案的 `output` 给模型读、
+结构化答案放 `ToolResultBlock.metadata`（`AskUserMetadata` 形状）供程序分支；外部工具可声明
+`metadata_schema`，回传结果经 `check_external_result` schema 校验、不符保持挂起可重发，v2.0.8+）、
 RAG 检索分数统一 higher-is-better（距离度量的后端返回取负后的距离，`score_threshold` 在距离度量下为负值，v2.0.8）、
 `Msg.append_usage` 累计 token 用量公共方法（上下文压缩调用的开销也计入 context 尾部消息的 usage，v2.0.8）、
 实时语音智能体（`agentscope.realtime` 模块 + `RealtimeAgent`：双向音频流、五路 provider 适配器
@@ -449,6 +454,7 @@ msg = SystemMsg("system", "系统提示")
 from agentscope.tool import Toolkit, ToolGroup
 from agentscope.tool import Bash, Read, Write, Edit, Glob, Grep  # 内置工具
 from agentscope.tool import TaskCreate, TaskGet, TaskList, TaskUpdate  # 任务工具
+from agentscope.tool import AskUser  # 多选提问外部工具（v2.0.8+）
 
 # 基本用法
 toolkit = Toolkit(tools=[Bash(), Read(), Write()])

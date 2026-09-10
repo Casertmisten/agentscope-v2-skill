@@ -11,6 +11,7 @@ class ToolBase(ABC):
     name: str                     # 工具名称
     description: str              # 描述
     input_schema: dict            # JSON Schema
+    metadata_schema: dict | None  # 外部工具：执行者必须写进 ToolResultBlock.metadata 的 schema（v2.0.8+）
     is_concurrency_safe: bool     # 是否并发安全
     is_read_only: bool            # 是否只读（影响权限）
     is_external_tool: bool        # 是否外部工具（不在本地执行）
@@ -27,6 +28,7 @@ async def check_permissions(tool_input, context) -> PermissionDecision
 async def match_rule(rule_content, tool_input) -> bool
 async def generate_suggestions(tool_input) -> list[PermissionRule]
 async def check_read_only(tool_input) -> bool   # EXPLORE 模式下用于判断是否只读
+async def check_external_result(result) -> None  # 外部工具：校验回传结果的 metadata（v2.0.8+）
 ```
 
 > v2.0.3 起，工具逻辑应重写 `call()`（而非 `__call__`）。`__call__` 已变为门面：它负责按
@@ -67,6 +69,59 @@ from agentscope.tool import TaskCreate, TaskGet, TaskList, TaskUpdate
 
 toolkit = Toolkit(tools=[Bash(), TaskCreate(), TaskList()])
 ```
+
+### AskUser — 向用户提问（v2.0.8+，外部工具）
+
+`AskUser` 是内置的**外部工具**（`is_external_tool=True`）：agent 不在本地执行它，
+而是发出 external tool call（`REQUIRE_EXTERNAL_EXECUTION` 事件），由驱动方
+（聊天 UI / 宿主程序）把多选题渲染给真人用户，再把答案回传。典型用途：收集偏好 /
+需求、澄清模糊指令、让用户在实现方案间做决策、提供下一步方向选项。
+
+```python
+from agentscope.tool import AskUser
+
+toolkit = Toolkit(tools=[Bash(), AskUser()])
+```
+
+模型侧调用约束（写进了工具描述，模型自动遵守）：
+
+- 单次调用批量 1–4 个问题（`questions`），每题 2–4 个选项（`options`），
+  选项 label 在题内唯一、问题文本在批次内唯一；
+- 每题可带 `header`（≤12 字符的短标签，渲染成 chip）与 `context`（用户作答时
+  需参照的草稿 / diff / 报错原文，展示在选项上方，别塞进问题文本里）；
+- 选项可带 `preview`（聚焦该选项时渲染的对比内容：代码片段 / ASCII 草图 / 配置
+  示例，仅单选题支持）；`multi_select=True` 允许多选；
+- "Other" 自由输入由前端自动提供，模型不需要（也不应）自己加 Other 选项；
+- 推荐某选项时把它放第一位并在 label 后加 "(Recommended)"。
+
+答案分两半回传（外部执行者构造 `ToolResultBlock`）：
+
+- `output`：写给模型读的自然语言总结；
+- `metadata`：结构化答案，形状由 `AskUserMetadata` 约定 ——
+  `answers: list[AskUserAnswer]`，每项含 `question`（原问题）/ `selected`
+  （所选选项 label 列表）/ `other`（用户自由输入），供宿主程序做分支判断
+  而不必解析自然语言：
+
+```python
+from agentscope.message import ToolResultBlock, ToolResultState
+from agentscope.tool import AskUserMetadata
+
+result = ToolResultBlock(
+    id=call.id, name="AskUser", output="用户选择：Redis", state=ToolResultState.SUCCESS,
+)
+result.metadata = AskUserMetadata(answers=[
+    {"question": "用哪个缓存？", "selected": ["Redis"], "other": None},
+]).model_dump()
+```
+
+相关导出：`AskUser` / `AskUserParams`（入参 schema）/ `AskUserMetadata` /
+`AskUserAnswer`。权限检查恒返回 `ALLOW`（"不会为提问再提问"）。
+
+> ℹ️ 自定义外部工具可声明 `metadata_schema`（JSON Schema）：外部结果回传时 Agent
+> 会先调 `tool.check_external_result(result)` 按 schema 校验 `metadata`，不符抛
+> `jsonschema.ValidationError`，回复保持挂起（parked），执行者修正后可重发；
+> `None`（默认）表示不做承诺、不校验。`output` 始终是给模型读的，metadata 才是
+> 程序可依赖的契约。
 
 ### 创建自定义工具（两种方式）
 
