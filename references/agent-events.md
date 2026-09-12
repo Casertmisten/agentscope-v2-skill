@@ -499,6 +499,45 @@ msg = renderer.last_msg      # 从事件累积出的回复 Msg（或 None）
 > `launch_console` 内部就是用 `ConsoleRenderer` + stdin 确认 + 信号处理组装出来的，
 > 因此两者的 `verbosity` / `max_tool_result_lines` 语义完全一致。
 
+## 终端 UI — TUI（v2.0.8+ 主干）
+
+`agentscope.tui` 模块提供基于 [Textual](https://textual.textualize.io/) 的全屏富文本
+终端聊天界面，是 `launch_console`（行式输出）的升级形态。需安装可选依赖
+`pip install "agentscope[tui]"`（textual；已包含在 `agentscope[full]` 中）：
+
+```python
+from agentscope.tui import launch_tui, ChatUI, MessagesUI
+```
+
+### launch_tui — 全屏交互聊天
+
+```python
+from agentscope.tui import launch_tui
+
+await launch_tui(
+    agent,                    # Agent | PipelineProtocol（GoalPipeline / SOPEngine 等均可）
+    messages=history_msgs,    # 可选：开始交互前展示的历史消息
+    user_name="user",         # 从输入框提交的消息的 name
+)
+```
+
+- 消息区 + 输入框 + HITL 控件一体：流式渲染回复（文本/思考/工具调用/结果/提示块），
+  工具确认（y/n）、外部工具执行、`AskUser` 多选问答都有对应交互控件；回复进行中可请求
+  中断（挂起中的 reply 发 `UserInterruptEvent`，运行中的取消任务）。
+- 输入 `/exit` 退出；回复期间输入会排队（每次 `reply_stream` 串行执行，不并发改写同一
+  agent 上下文）；目标抛异常时界面通知错误并继续运行。
+- 适配终端 ANSI 默认色，跟随用户的终端背景而不是 Textual 的暗色主题。
+
+### ChatUI / MessagesUI — 可嵌入组件
+
+在**自己的 Textual 应用**里组装时用组件级 API：
+
+- `ChatUI`：完整聊天控件（`MessagesUI` + 输入框 Composer + HITL 控件），不依赖 Agent——
+  通过 `Submitted` / `Confirmed` / `ExternalExecutionSubmitted` / `InterruptRequested`
+  等消息事件把交互结果交还给宿主应用。
+- `MessagesUI`：只读消息渲染控件，按权威 `Msg` 快照渲染（把事件累积成消息再显示，
+  不直接消费事件流）。
+
 ## 结构化输出（v2.0.5+）
 
 `reply` / `reply_stream` 新增 `structured_schema: Type[BaseModel] | None` 参数。传入 Pydantic

@@ -1261,6 +1261,25 @@ IM 平台 ──消息──▶ Channel(适配器) ──emit──▶ ChannelGa
 
 > ℹ️ 这些工具由频道实例按需注入到该会话的 workspace，普通 SDK agent 开发者无需手动注册。
 
+### 钉钉知识库 wiki 工具（v2.0.8+ 主干）
+
+平台带 wiki（知识库）的 channel 还可以让 agent **以消息发送者本人的身份**浏览和读取平台
+知识库。`ChannelBase` 定义了三个 wiki 抽象方法与统一数据模型，channel 在
+`ChannelCapability` 上声明 `wiki=True` 即自动获得对应的内置只读工具（当前仅钉钉实现）：
+
+| 工具 | 作用 |
+|---|---|
+| `ListWikiSpaces` | 列出当前发送者可读的知识库空间（返回 `root_node_id` 供下一步浏览） |
+| `ListWikiNodes` | 浏览某个空间的节点树（文件夹 / 文档，`has_children` / `is_document` 区分） |
+| `ReadWikiDocument` | 读取一篇文档，**按 block 分段读取**（`next_start_index` 续读，长文档多次调用而非一次撑爆上下文） |
+
+- 数据模型：`WikiSpace` / `WikiNode` / `WikiPage`（分页，`next_token`）/ `WikiDocument`
+  （`content` 为 `TextBlock | DataBlock`，直达 agent 无需转换）。
+- 身份绑定：会话记录 `ChannelOrigin.channel_user_id`（发起会话的平台用户），工具用它
+  调用 channel 的 wiki 方法——**访问权限按发送者评估，模型无法提供或伪造身份**；
+  工具为只读查询，权限检查恒 ALLOW。
+- 分页统一：`limit`（1–50）+ `next_token`，非空 token 传入下一次调用翻页。
+
 ### 自定义平台
 
 继承 `ChannelBase` 即可接入新平台——子类在**类自身**上声明平台元数据，service 据此自动渲染

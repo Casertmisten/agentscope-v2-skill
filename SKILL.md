@@ -26,6 +26,8 @@ Anthropic thinking_mode 推理控制 / Channel IM 频道接入钉钉、飞书与
 Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 workspace）、
 终端控制台 console（launch_console 交互式终端对话调试 / ConsoleRenderer 事件流渲染，内置 HITL 工具确认与 Ctrl+C 中断，agent 与 pipeline 均可传入）、
 Pipeline 流水线（GoalPipeline 执行者-校验者目标达成循环，对外暴露与 Agent 相同的 reply_stream 事件流）、
+SOP 标准作业程序（agentscope.sop：SOP/SOPStep/SOPEngine 固定里程碑序列 + handover 隔离 + SOPRunState 可持久化运行状态，v2.0.8+）、
+终端 UI TUI（launch_tui 全屏 Textual 聊天 + ChatUI/MessagesUI 可嵌入组件，v2.0.8+）、
 A2A 协议远程智能体（A2AAgent 客户端适配器 + A2AAgentState，连接任意 A2A 1.0 服务）、
 实时语音智能体（RealtimeAgent 双向音频流 + agentscope.realtime 模块：DashScopeRealtimeModel Qwen-Omni /
 DashScopeAudioRealtimeModel Qwen-Audio / OpenAIRealtimeModel GPT Realtime / GeminiRealtimeModel Live API /
@@ -76,7 +78,9 @@ BackendBase 抽象对外导出 `DirEntry`（v2.0.6+）、
 Anthropic 新增 `thinking_mode` / `thinking_display` / `reasoning_effort` 推理控制参数（v2.0.6+）、
 Channel IM 频道（接入钉钉 / 飞书 / Discord，ChannelBase 适配器 + ChannelGateway 入站路由 +
 ChannelLifecycleDispatcher 出站转发 + 确定性派生会话 + 交互卡片权限审批，v2.0.6+；钉钉适配器
-与 `enable_channel_worker` 专用连接 worker 为 v2.0.7+）、
+与 `enable_channel_worker` 专用连接 worker 为 v2.0.7+；钉钉知识库 wiki 工具
+`ListWikiSpaces`/`ListWikiNodes`/`ReadWikiDocument` 以消息发送者身份读取平台 wiki，
+`ChannelCapability.wiki=True` 声明能力即自动注入，长文档按 block 分段读取，v2.0.8+）、
 Skill 按 agent 隔离（`skills/.seed` 模板 + 每 agent 一个分区，惰性装备、原地可编辑、删除 agent 时
 `purge_agent` 清理，`list/add/remove_skill` 带 `agent_id`，v2.0.6+）、
 终端控制台 console（`launch_console` 交互式终端对话：自动渲染流式回复、处理工具调用 y/n 确认、Ctrl+C 中断当前 reply；
@@ -84,6 +88,13 @@ Skill 按 agent 隔离（`skills/.seed` 模板 + 每 agent 一个分区，惰性
 v2.0.8 `agent` 参数接受 `Agent | PipelineProtocol`）、
 Pipeline 流水线（`GoalPipeline` 执行者-校验者目标达成循环：executor 产出执行报告 → verifier 结构化验收
 pass/fail/impossible → fail 带反馈重试至 `max_iters`；支持 HITL 暂停恢复，对外暴露与 Agent 相同的事件流，v2.0.8）、
+SOP 标准作业程序（`agentscope.sop`：`SOP` 固定里程碑序列定义 + `SOPStep`（executor 产出 handover /
+verifier 裁决，拒绝带反馈重试至 `max_attempts`）+ `SOPStepBase` 自定义步骤 + `SOPEngine` 运行器
+（形如 agent，HITL 挂起恢复，`SOP_STEP_STARTED/ENDED` 事件）+ `SOPRunState` 可持久化运行状态；
+步骤间仅通过 handover 交接物传递信息，v2.0.8+）、
+终端 UI TUI（`agentscope.tui`：`launch_tui` 全屏 Textual 交互聊天（Agent / pipeline 均可传入，
+含 HITL 确认/外部执行/中断控件与 `/exit`）+ `ChatUI`/`MessagesUI` 可嵌入组件；
+`pip install "agentscope[tui]"`，v2.0.8+）、
 达到 `max_iters` 后强制一次无工具的最终文本总结再结束（总结消息 `finished_reason=EXCEED_MAX_ITERS`，v2.0.8）、
 A2A 协议远程智能体（`A2AAgent`：A2A 1.0 远端 agent 的有状态客户端适配器，不继承 Agent，
 提供 reply/reply_stream/observe 同风格接口，`agentscope[a2a]` extra；`A2AAgentState` 持有
@@ -200,7 +211,9 @@ asyncio.run(main())
 | A2A 协议远程智能体（A2AAgent 客户端适配器 / A2AAgentState） | [references/agent-events.md](references/agent-events.md) |
 | 实时语音（RealtimeAgent / realtime 模型适配器 / Transport / VAD） | [references/realtime.md](references/realtime.md) |
 | Pipeline 流水线（GoalPipeline 执行者-校验者循环） | [references/pipeline.md](references/pipeline.md) |
+| SOP 标准作业程序（SOP/SOPStep/SOPEngine/SOPRunState） | [references/pipeline.md](references/pipeline.md) |
 | 终端控制台（launch_console 交互调试 / ConsoleRenderer 事件渲染） | [references/agent-events.md](references/agent-events.md) |
+| 终端 UI（launch_tui 全屏聊天 / ChatUI / MessagesUI 组件） | [references/agent-events.md](references/agent-events.md) |
 | 权限和工具组（含 on_check_permission hook） | [references/permissions.md](references/permissions.md) |
 | RAG 知识库（KnowledgeBase / ElasticsearchStore / RAGMiddleware） | [references/rag.md](references/rag.md) |
 | 中间件（含 TTS / Tracing / Mem0 / ReMe / AgenticMemory / on_check_permission）和工作区 | [references/middleware-workspace.md](references/middleware-workspace.md) |
@@ -360,6 +373,18 @@ print(renderer.last_msg)             # 累积出的 Msg
 `verbosity`：`"quiet"` 仅回复文本与错误；`"default"` 额外含思考、工具调用/结果、提示块、token 用量、HITL 通知；`"debug"` 再加生命周期等默认不可见事件。详情见
 [references/agent-events.md](references/agent-events.md)。
 
+**终端 UI TUI（v2.0.8+）**：需要全屏富文本界面时用 `agentscope.tui`（`pip install "agentscope[tui]"`）：
+
+```python
+from agentscope.tui import launch_tui
+
+await launch_tui(agent)   # Agent | PipelineProtocol 均可；全屏聊天 + HITL 控件，/exit 退出
+```
+
+基于 Textual，支持流式渲染、工具确认/外部执行/`AskUser` 交互控件、中断与历史消息回放；
+`ChatUI` / `MessagesUI` 组件可嵌入自己的 Textual 应用。详情见
+[references/agent-events.md](references/agent-events.md)。
+
 ## Pipeline 流水线（v2.0.8）
 
 `agentscope.pipeline` 把多个 agent 按固定逻辑编排成整体，对外暴露与 `Agent` 相同的
@@ -380,6 +405,32 @@ await launch_console(pipe)    # 交互式调试整个流水线
 
 executor / verifier 通常共享同一个 Workspace（verifier 才能读到 executor 的产物）。详情见
 [references/pipeline.md](references/pipeline.md)。
+
+## SOP 标准作业程序（v2.0.8+）
+
+`agentscope.sop` 表达**固定顺序的里程碑**：每步完成并验证通过后才进下一步，定义与运行状态
+分离（一个 `SOP` 定义可驱动多次运行，进度存于可持久化的 `SOPRunState`）。步骤间只通过
+**handover 交接物**传递信息——下一步看不到上一步的文件、工具输出或对话：
+
+```python
+from agentscope.sop import SOP, SOPStep, SOPEngine
+
+sop = SOP(name="需求交付", steps=[
+    SOPStep(subject="写方案", description="给出技术方案", executor=writer),
+    SOPStep(subject="实现", description="完成编码与自测",
+            executor=coder, verifier=reviewer, max_attempts=3),
+])
+
+engine = SOPEngine(sop)                    # 形如 agent，可传 launch_console / launch_tui
+async for event in engine.reply_stream(UserMsg("user", "给 parser 模块加上缓存")):
+    ...   # executor/verifier 的全部事件；HITL 挂起后带答案事件再调 reply_stream 恢复
+```
+
+- `SOPStep`：executor 以结构化输出交出 handover；verifier（可省略）裁决 `{passed, message}`，
+  拒绝时 message 原样回传重试，至 `max_attempts` 后该步 FAILED。
+- `SOPEngine`：`SOP_STEP_STARTED/ENDED` 自定义事件；AWAITING 挂起不持协程；中断不耗预算。
+- `SOPStepBase` 可继承自定义步骤（`state_type` 声明扩展状态，持久化往返保留）。
+- 详情见 [references/pipeline.md](references/pipeline.md)。
 
 ## A2A 远程智能体（v2.0.8）
 
