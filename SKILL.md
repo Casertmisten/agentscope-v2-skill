@@ -27,7 +27,7 @@ Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 wo
 终端控制台 console（launch_console 交互式终端对话调试 / ConsoleRenderer 事件流渲染，内置 HITL 工具确认与 Ctrl+C 中断，agent 与 pipeline 均可传入）、
 Pipeline 流水线（GoalPipeline 执行者-校验者目标达成循环，对外暴露与 Agent 相同的 reply_stream 事件流）、
 SOP 标准作业程序（agentscope.sop：SOP/SOPStep/SOPEngine 固定里程碑序列 + handover 隔离 + SOPRunState 可持久化运行状态，v2.0.8+）、
-终端 UI TUI（launch_tui 全屏 Textual 聊天 + ChatUI/MessagesUI 可嵌入组件，v2.0.8+）、
+终端 UI TUI（launch_tui 全屏 Textual 聊天 + launch_realtime_ui 语音会话界面 + ChatUI/MessagesUI 可嵌入组件，v2.0.8+）、
 A2A 协议远程智能体（A2AAgent 客户端适配器 + A2AAgentState，连接任意 A2A 1.0 服务）、
 实时语音智能体（RealtimeAgent 双向音频流 + agentscope.realtime 模块：DashScopeRealtimeModel Qwen-Omni /
 DashScopeAudioRealtimeModel Qwen-Audio / OpenAIRealtimeModel GPT Realtime / GeminiRealtimeModel Live API /
@@ -93,8 +93,8 @@ verifier 裁决，拒绝带反馈重试至 `max_attempts`）+ `SOPStepBase` 自�
 （形如 agent，HITL 挂起恢复，`SOP_STEP_STARTED/ENDED` 事件）+ `SOPRunState` 可持久化运行状态；
 步骤间仅通过 handover 交接物传递信息，v2.0.8+）、
 终端 UI TUI（`agentscope.tui`：`launch_tui` 全屏 Textual 交互聊天（Agent / pipeline 均可传入，
-含 HITL 确认/外部执行/中断控件与 `/exit`）+ `ChatUI`/`MessagesUI` 可嵌入组件；
-`pip install "agentscope[tui]"`，v2.0.8+）、
+含 HITL 确认/外部执行/中断控件与 `/exit`）+ `launch_realtime_ui` 语音会话界面（RealtimeAgent
+转写显示，v2.0.8+）+ `ChatUI`/`MessagesUI` 可嵌入组件；`pip install "agentscope[tui]"`，v2.0.8+）、
 达到 `max_iters` 后强制一次无工具的最终文本总结再结束（总结消息 `finished_reason=EXCEED_MAX_ITERS`，v2.0.8）、
 A2A 协议远程智能体（`A2AAgent`：A2A 1.0 远端 agent 的有状态客户端适配器，不继承 Agent，
 提供 reply/reply_stream/observe 同风格接口，`agentscope[a2a]` extra；`A2AAgentState` 持有
@@ -104,7 +104,8 @@ context_id/task_id 支持会话续接与 Task 续跑，DataBlock 事件新增 `n
 `AskUser` 内置外部工具（多选题向用户收集偏好/澄清意图/做决策：1–4 问题、每题 2–4 选项、
 header/context/preview/multi_select，"Other" 自由输入自动提供；答案的 `output` 给模型读、
 结构化答案放 `ToolResultBlock.metadata`（`AskUserMetadata` 形状）供程序分支；外部工具可声明
-`metadata_schema`，回传结果经 `check_external_result` schema 校验、不符保持挂起可重发，v2.0.8+）、
+`metadata_schema`，回传结果经 `check_external_result` schema 校验（仅成功结果参与校验）、
+不符保持挂起可重发，v2.0.8+）、
 RAG 检索分数统一 higher-is-better（距离度量的后端返回取负后的距离，`score_threshold` 在距离度量下为负值，v2.0.8）、
 `Msg.append_usage` 累计 token 用量公共方法（上下文压缩调用的开销也计入 context 尾部消息的 usage，v2.0.8）、
 实时语音智能体（`agentscope.realtime` 模块 + `RealtimeAgent`：双向音频流、五路 provider 适配器
@@ -382,8 +383,9 @@ await launch_tui(agent)   # Agent | PipelineProtocol 均可；全屏聊天 + HIT
 ```
 
 基于 Textual，支持流式渲染、工具确认/外部执行/`AskUser` 交互控件、中断与历史消息回放；
-`ChatUI` / `MessagesUI` 组件可嵌入自己的 Textual 应用。详情见
-[references/agent-events.md](references/agent-events.md)。
+`ChatUI` / `MessagesUI` 组件可嵌入自己的 Textual 应用。语音智能体用
+`launch_realtime_ui(agent, transport)` 显示 RealtimeAgent 会话转写（agent 与 transport
+均为借用、须已启动）。详情见 [references/agent-events.md](references/agent-events.md)。
 
 ## Pipeline 流水线（v2.0.8）
 

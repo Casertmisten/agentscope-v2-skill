@@ -46,6 +46,9 @@ from agentscope.tool import Bash, Read, Write, Edit, Glob, Grep, ResetTools, Pow
 toolkit = Toolkit(tools=[Bash(), Read(), Write(), Edit()])
 ```
 
+> ℹ️ `Glob` 匹配结果默认上限 250 条：`head_limit` 控制返回条数（`0` 表示不限），
+> `offset` 跳过前 N 条，超出时结果尾部附分页提示（v2.0.8+）。
+
 ### PowerShell 工具（v2.0.5+，Windows）
 
 `PowerShell` 是与 `Bash` 平级的 `ToolBase` 子类，用于 Windows 环境。探针优先 `pwsh` 后
@@ -120,8 +123,9 @@ result.metadata = AskUserMetadata(answers=[
 > ℹ️ 自定义外部工具可声明 `metadata_schema`（JSON Schema）：外部结果回传时 Agent
 > 会先调 `tool.check_external_result(result)` 按 schema 校验 `metadata`，不符抛
 > `jsonschema.ValidationError`，回复保持挂起（parked），执行者修正后可重发；
-> `None`（默认）表示不做承诺、不校验。`output` 始终是给模型读的，metadata 才是
-> 程序可依赖的契约。
+> 仅**成功**结果（`state == SUCCESS`）参与校验，失败结果不校验（schema 描述的是
+> 成功运行的形状）。`None`（默认）表示不做承诺、不校验。`output` 始终是给模型读的，
+> metadata 才是程序可依赖的契约。
 
 ### 创建自定义工具（两种方式）
 

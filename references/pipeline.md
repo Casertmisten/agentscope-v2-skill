@@ -125,8 +125,10 @@ async for event in engine.reply_stream(UserMsg("user", "给 parser 模块加上�
 ### 状态模型（可持久化）
 
 - `SOPRunState`：一次运行的全部可存档内容——`id` / `inputs`（首次输入）/ `steps` / `created_at`；
-  `phase` 属性由各步推导（任一 FAILED 即 FAILED；任一 AWAITING 即 AWAITING；全部 COMPLETED
-  才算 COMPLETED）。
+  `phase` 由各步推导（任一 FAILED 即 FAILED；任一 AWAITING 即 AWAITING；全部 COMPLETED
+  才算 COMPLETED），且作为 computed field 随 `model_dump()` 一并写出（免重放步骤即可排序）。
+  `steps` 按实际子类序列化（`SerializeAsAny`）：自定义 `state_type` 步骤多出的字段完整保留，
+  不会被裁回基类形状。
 - `SOPStepRunState`：单步记录——`phase` / `given`（本次尝试拿到的输入）/ `submission`
   （handover 提交物，`list[TextBlock|DataBlock]`）/ `verifications`（已落定的裁决列表，
   其长度即已用尝试次数）。

@@ -34,6 +34,10 @@ async with agent:                              # 模型会话（connect/close）
 `REQUIRE_USER_CONFIRM` 等，见 [agent-events.md](agent-events.md)）；`agentscope.realtime`
 自身的 `ModelEvent` 是**模型侧**事件，只与自定义模型适配器相关（见下文）。
 
+想要全屏终端语音界面（转写显示 + HITL 控件，音频由 transport 播放）时，用
+`agentscope.tui.launch_realtime_ui(agent, transport)`（v2.0.8+ 主干，
+`pip install "agentscope[tui]"`），见 [agent-events.md](agent-events.md)。
+
 ## RealtimeAgent
 
 ```python

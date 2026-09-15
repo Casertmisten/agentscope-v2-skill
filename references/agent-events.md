@@ -506,7 +506,7 @@ msg = renderer.last_msg      # 从事件累积出的回复 Msg（或 None）
 `pip install "agentscope[tui]"`（textual；已包含在 `agentscope[full]` 中）：
 
 ```python
-from agentscope.tui import launch_tui, ChatUI, MessagesUI
+from agentscope.tui import launch_tui, launch_realtime_ui, ChatUI, MessagesUI
 ```
 
 ### launch_tui — 全屏交互聊天
@@ -527,6 +527,28 @@ await launch_tui(
 - 输入 `/exit` 退出；回复期间输入会排队（每次 `reply_stream` 串行执行，不并发改写同一
   agent 上下文）；目标抛异常时界面通知错误并继续运行。
 - 适配终端 ANSI 默认色，跟随用户的终端背景而不是 Textual 的暗色主题。
+
+### launch_realtime_ui — 语音会话界面（v2.0.8+ 主干）
+
+给 `RealtimeAgent` 的全屏终端视图：说话是主要输入，界面只显示**转写**（音频由 transport
+自行播放，不进消息区）：
+
+```python
+from agentscope.tui import launch_realtime_ui
+
+async with agent, transport:            # 二者均为借用：须已启动，此处也不负责关闭
+    await launch_realtime_ui(
+        agent,                  # 已连接的 RealtimeAgent；整场会话只跑一个 reply_stream
+        transport,              # 已启动的 TransportBase，负责采音与播放
+        messages=history_msgs,  # 可选：会话开始前展示的历史消息
+        user_name="user",
+    )
+```
+
+- 会话随 transport 的输入结束而结束（如麦克风流关闭）；期间确认/打断/文本轮经
+  `agent.send()` 回传。
+- 仅当 `agent.model.supports_text_input` 时启用文本输入框（如 DashScope
+  Qwen-Audio 系列）；HITL 确认与打断复用与 `launch_tui` 相同的控件。
 
 ### ChatUI / MessagesUI — 可嵌入组件
 
