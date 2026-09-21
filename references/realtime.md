@@ -56,8 +56,8 @@ agent = RealtimeAgent(
 
 **三个生命周期刻意分离**：agent 拥有模型会话与状态；transport 归创建者所有；
 `reply_stream` 只是借用二者。因此客户端断开重连不丢模型会话，模型会话静默超时
-也会在用户说下一句话时自动重连（指数退避；重连时已发生的对话以 transcript 形式
-拼进 instructions 恢复上下文）。
+也会在用户说下一句话或 `send()` 发送文本时自动重连（指数退避；重连时已发生的对话
+以 transcript 形式拼进 instructions 恢复上下文，上一会话遗留的终止事件不会重放）。
 
 ### 方法
 

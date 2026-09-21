@@ -62,7 +62,7 @@ uv pip install "agentscope[mem0]"
 |---|---|---|
 | `TextParser` | text/markdown 等 | 整个文件为 1 个 Section（不按标题切分） |
 | `PDFParser` | `application/pdf` | 每页 1 个 Section（仅文本，不提取图片） |
-| `PPTParser` | PPTX | 每张幻灯片 1 个 Section |
+| `PPTParser` | PPTX | 每张幻灯片 1 个 Section（组合形状内的文本同样读取，v2.0.8+） |
 | `ImageParser` | 图像 | 整个文件为 1 个 Section(多模态) |
 | `WordParser`（v2.0.4+） | `.docx` | 按文档顺序,`separate_table=True` 时表格独立成 Section |
 | `ExcelParser`（v2.0.4+） | `.xlsx` / `.xls` | `separate_sheet=True` 时每个 sheet 一个 Section(含 `metadata={"sheet": name}`);默认合并为一个 Section |

@@ -108,7 +108,8 @@ model = credential.get_chat_model_class()(
 > 没有静态 Python 常量。新增模型通常只加 YAML，不改代码。例如 v2.0.5 新增了
 > `kimi-k3`（Moonshot，1048576 上下文，多模态）、DashScope 的 `qwen3.7-plus`/`deepseek-v4-pro`/`glm-5.2`，
 > v2.0.6 全量刷新了各 provider 的 model card（新增 Claude opus-5/sonnet-5/fable/opus-4-8、Gemini 3.5/3.6-flash、
-> GPT-5.6 系列、Kimi K2.7-code 等），均可通过 `credential.list_models()` 查到。`kimi-k3` 在 `MoonshotChatModel` 中额外支持
+> GPT-5.6 系列、Kimi K2.7-code 等），v2.0.8+ Ollama 新增 `qwen3:8b`/`llama3.2:3b`/`phi4-mini`
+> 三个本地模型卡，均可通过 `credential.list_models()` 查到。`kimi-k3` 在 `MoonshotChatModel` 中额外支持
 > `reasoning_effort: "low"|"high"|"max"` 参数。
 
 ### OpenAI Chat 模型专属参数

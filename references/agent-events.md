@@ -140,6 +140,10 @@ context_config = ContextConfig(
 > 累加到 context 尾部消息的 `usage` 上（整个上下文被压缩时挂到一条被格式化器跳过的
 > 空消息），可通过 `Msg.append_usage` 查看。
 
+> ℹ️ v2.0.8+：最终 `Msg` 的 `usage` 在**所有结束路径**上统一保留本轮累计用量——
+> 正常完成 / 中断（INTERRUPTED）/ 超迭代总结（EXCEED_MAX_ITERS）/ 结构化输出均带；
+> 上下文压缩把当前回复消息整体压掉时，其 usage 也会挂到保留的上下文尾部不丢失。
+
 ## 事件系统 (Event)
 
 ### 事件类型总览

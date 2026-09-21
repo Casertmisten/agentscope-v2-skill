@@ -151,7 +151,7 @@ class MyTool(ToolBase):
 
 内置工具（Bash、Read、Write、Edit、Glob、Grep）都有完善的权限检查：
 
-- **Bash** — 命令模式匹配，只读命令（`ls`/`git status` 等）在各模式自动放行；工作目录内文件系统命令（`mkdir`/`rm`/`mv`/`cp` 等，要求所有目标路径都在工作目录内）在 `ACCEPT_EDITS` 和 `DONT_ASK` 模式自动放行；v2.0.5+ 起含注入风险（命令替换/控制流，如 `ls $(rm -rf /)`）的命令**不再判为只读**，会走 bypass-immune 的安全 ASK；`find . -delete`/`-exec`/`-ok` 等会改文件的 find 谓词也不再当只读放行
+- **Bash** — 命令模式匹配，只读命令（`ls`/`git status` 等）在各模式自动放行；工作目录内文件系统命令（`mkdir`/`rm`/`mv`/`cp` 等，要求所有目标路径都在工作目录内）在 `ACCEPT_EDITS` 和 `DONT_ASK` 模式自动放行；v2.0.5+ 起含注入风险（命令替换/控制流，如 `ls $(rm -rf /)`）的命令**不再判为只读**，会走 bypass-immune 的安全 ASK；`find . -delete`/`-exec`/`-ok` 等会改文件的 find 谓词也不再当只读放行；v2.0.8+ 起 `tee`（会写文件）同样移出只读白名单
 - **Read/Write/Edit** — 文件路径模式匹配，敏感文件保护，`ACCEPT_EDITS`/`DONT_ASK` 模式下自动允许工作目录操作
 - **Glob/Grep** — 搜索路径匹配，只读在各模式自动放行，`EXPLORE` 模式下更是全部放行
 

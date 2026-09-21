@@ -119,6 +119,14 @@ on_reply 中间件可吞掉 `ReplyEndEvent` 续跑回复循环（v2.0.6+，最�
 MCP 有状态客户端支持 close 后重连（v2.0.6+）、
 MCP 运行时 headers（`MCPClient.set_runtime_headers` 不断连替换后续请求 headers，凭证轮换无需重连，
 仅 Streamable HTTP，v2.0.8+）、
+最终消息 token 用量统一保留（所有结束路径——正常完成/中断/超迭代总结/结构化输出——的
+最终 `Msg` 都带本轮累计 `usage`，上下文压缩吞掉当前回复消息时 usage 也不丢，v2.0.8+）、
+`AskUser` 参数硬校验（题内选项 label、批次内问题文本重复直接抛 `ValidationError`，v2.0.8+）、
+Bash 只读白名单移除 `tee`（写文件的命令不再判只读，v2.0.8+）、
+`InMemoryMessageBus.try_lock` 按 `ttl_secs` 过期租约（持锁者崩溃不再永久阻塞 key，v2.0.8+）、
+`PPTParser` 读取组合形状（grouped shapes）内文本（v2.0.8+）、
+Ollama 新增 `qwen3:8b` / `llama3.2:3b` / `phi4-mini` 内置模型卡（v2.0.8+）、
+多提供商格式化器把工具结果媒体延迟到该轮全部 tool 消息之后再发送（多模态工具结果不再丢失，v2.0.8+）、
 Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）

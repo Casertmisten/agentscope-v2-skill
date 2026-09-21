@@ -1021,7 +1021,7 @@ bus = InMemoryMessageBus()
 ```
 
 - `RedisMessageBus` —— 生产环境、多 worker 部署必选。
-- `InMemoryMessageBus`（v2.0.3+）—— 单进程部署的轻量选项，无需 Redis，适合本地开发与测试。**不支持过期/多进程**。
+- `InMemoryMessageBus`（v2.0.3+）—— 单进程部署的轻量选项，无需 Redis，适合本地开发与测试。**不支持多进程**；`try_lock` 自 v2.0.8+ 起按 `ttl_secs` 过期租约（与 Redis `SET NX EX` 同语义，持锁者崩溃不再永久阻塞 key）。
 - `MessageBus` —— 上述两者的抽象基类，可自行子类化实现自定义后端。
 
 > ℹ️ MessageBus 属于服务化层基础设施，普通 agent 开发者无需直接使用——由 `create_app` 启动的 FastAPI 服务在内部持有并调用。
