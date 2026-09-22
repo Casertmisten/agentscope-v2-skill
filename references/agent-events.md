@@ -344,7 +344,8 @@ await agent.reply(UserInterruptEvent(reply_id="原reply_id"))
 > - **parked reply 的中断**：用 `UserInterruptEvent`（本文所述），针对等待 HITL/外部结果的 reply。
 > - **running reply 的取消**：直接取消驱动 `reply_stream` 的底层 asyncio task，agent 经
 >   `CancelledError` 清理路径（`ReActConfig.interruption_raise_cancelled_error=True` 时会在
->   清理后重新抛出，便于上层捕获）。
+>   清理后重新抛出，便于上层捕获）。v2.0.8+：推理/行动迭代中收到 `UserInterruptEvent` 的
+>   清理也统一转入该 `CancelledError` 路径，中断后取消语义正确向外传播。
 >
 > 服务化场景下，HTTP 端 `POST /sessions/{sid}/interrupt` 会派发 `UserInterruptEvent`。
 

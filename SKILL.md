@@ -127,6 +127,15 @@ Bash 只读白名单移除 `tee`（写文件的命令不再判只读，v2.0.8+�
 `PPTParser` 读取组合形状（grouped shapes）内文本（v2.0.8+）、
 Ollama 新增 `qwen3:8b` / `llama3.2:3b` / `phi4-mini` 内置模型卡（v2.0.8+）、
 多提供商格式化器把工具结果媒体延迟到该轮全部 tool 消息之后再发送（多模态工具结果不再丢失，v2.0.8+）、
+内置 Grep 工具输出按路径排序、`offset`/`head_limit` 分页顺序稳定（v2.0.8+）、
+`ToolGroup` 构造时复制传入的 `tools`/`mcps` 列表（`add_tool` 不再原地突变调用方数据，v2.0.8+）、
+Embedding 多模态能力以公开属性 `supports_multimodal` 暴露（DashScope/Gemini，v2.0.8+）、
+`ApproxTokenChunker` 丢弃空白文本块、`ExcelParser` 保留仅图片/仅表头的 sheet（v2.0.8+）、
+`ReplyBudgetControlMiddleware` 计数在 `ReplyStartEvent` 重置（`ReplyEndEvent` 被外层中间件吞掉也不再 KeyError，v2.0.8+）、
+被 `UserInterruptEvent` 打断的 reply 清理后统一走 `CancelledError` 路径、RealtimeAgent 的
+`interrupt()` 自动携带当前 `reply_id`（v2.0.8+）、
+各 provider 新增 14 个模型卡（Claude Fable 5.1、GPT-6 Astra、GLM-5.3、DeepSeek v4.1-flash/flash、
+Qwen3.8-flash/Omni-flash/27b、Gemini 3.7/3.8-flash、Grok 4.6、豆包 Seed 2.1 pro/turbo、gemma4，v2.0.8+）、
 Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）

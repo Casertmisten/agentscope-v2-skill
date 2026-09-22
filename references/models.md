@@ -109,7 +109,12 @@ model = credential.get_chat_model_class()(
 > `kimi-k3`（Moonshot，1048576 上下文，多模态）、DashScope 的 `qwen3.7-plus`/`deepseek-v4-pro`/`glm-5.2`，
 > v2.0.6 全量刷新了各 provider 的 model card（新增 Claude opus-5/sonnet-5/fable/opus-4-8、Gemini 3.5/3.6-flash、
 > GPT-5.6 系列、Kimi K2.7-code 等），v2.0.8+ Ollama 新增 `qwen3:8b`/`llama3.2:3b`/`phi4-mini`
-> 三个本地模型卡，均可通过 `credential.list_models()` 查到。`kimi-k3` 在 `MoonshotChatModel` 中额外支持
+> 三个本地模型卡，后又新增 14 个模型卡：Claude Fable 5.1（Anthropic）、`gpt-6-astra`
+> （OpenAI chat/response 双格式）、`glm-5.3` / `deepseek-v4.1-flash` / `qwen3.8-flash` /
+> `qwen3.8-omni-flash`（DashScope）、`deepseek-flash`（DeepSeek）、`gemini-3.7-flash` /
+> `gemini-3.8-flash`（Gemini）、`grok-4.6`（xAI）、豆包 `doubao-seed-2-1-pro-260915` /
+> `doubao-seed-2-1-turbo-260628`（Volcengine）、`gemma4` / `qwen3.8-27b`（Ollama），
+> 均可通过 `credential.list_models()` 查到。`kimi-k3` 在 `MoonshotChatModel` 中额外支持
 > `reasoning_effort: "low"|"high"|"max"` 参数。
 
 ### OpenAI Chat 模型专属参数
@@ -339,6 +344,8 @@ response = await emb_model(inputs=["hello", "world"])
 
 > DashScope 多模态可配 `embedding_cache=FileEmbeddingCache()` 启用文件缓存。
 > 响应解析已兼容服务端省略 `index`、或在 `embedding` 为空时回退到 `dense_embedding` 的情况。
+> v2.0.8+：是否多模态以公开属性 `supports_multimodal` 暴露（DashScope/Gemini 均支持），
+> 可在运行时据此决定输入走文本还是多模态路径。
 
 > 通过 Credential 获取实现类：`credential.get_embedding_model_class()`（未支持的 provider 返回 `None`）。
 

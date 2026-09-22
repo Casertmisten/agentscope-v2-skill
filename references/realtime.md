@@ -66,7 +66,7 @@ agent = RealtimeAgent(
 | `async with agent:` / `connect()` / `close()` | 打开/关闭模型会话。`connect` 幂等，重连安全 |
 | `reply_stream(transport)` | 挂接一个传输并异步迭代 `AgentEvent`，直到该 transport 的输入结束 |
 | `send(inputs)` | 非音频输入的唯一入口：`str`/`Msg` 文本轮、`UserConfirmResultEvent`（HITL 应答）、`UserInterruptEvent`（打断）。文本轮会先打断进行中的回复 |
-| `interrupt()` | 等价于 `send(UserInterruptEvent())`，即用户按"停止" |
+| `interrupt()` | 等价于 `send(UserInterruptEvent())`，即用户按"停止"（v2.0.8+ 事件自动带当前 `reply_id`） |
 | `last_turn_metrics` | `TurnMetrics`：最近一轮的时延分解 |
 
 `reply_stream` 的语义细节：

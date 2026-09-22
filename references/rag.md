@@ -65,7 +65,7 @@ uv pip install "agentscope[mem0]"
 | `PPTParser` | PPTX | 每张幻灯片 1 个 Section（组合形状内的文本同样读取，v2.0.8+） |
 | `ImageParser` | 图像 | 整个文件为 1 个 Section(多模态) |
 | `WordParser`（v2.0.4+） | `.docx` | 按文档顺序,`separate_table=True` 时表格独立成 Section |
-| `ExcelParser`（v2.0.4+） | `.xlsx` / `.xls` | `separate_sheet=True` 时每个 sheet 一个 Section(含 `metadata={"sheet": name}`);默认合并为一个 Section |
+| `ExcelParser`（v2.0.4+） | `.xlsx` / `.xls` | `separate_sheet=True` 时每个 sheet 一个 Section(含 `metadata={"sheet": name}`);默认合并为一个 Section。仅图片/仅表头的 sheet 也保留(图片成 DataBlock Section、表头成表格文本,v2.0.8+) |
 
 Word/Excel Parser 针对表格场景增加配置:
 
@@ -139,6 +139,7 @@ chunks = await chunker.chunk(sections)
 
 - token 数近似为 `len(text.encode("utf-8")) // 4`——**无需任何 tokenizer 依赖**,数量级对大多数 LLM tokenizer 足够。
 - 携带 `DataBlock` 的 Section(图片/视频等)原样作为单条 Chunk 透传。
+- 空白文本(空 Section / 空白扫描页)不产生 Chunk,不会进入 embedding 步骤(v2.0.8+)。
 - 约束:`chunk_size > 0`,且 `0 <= overlap < chunk_size`,否则抛 `ValueError`。
 
 ## QdrantStore —— 向量库后端

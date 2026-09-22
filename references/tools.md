@@ -47,7 +47,8 @@ toolkit = Toolkit(tools=[Bash(), Read(), Write(), Edit()])
 ```
 
 > ℹ️ `Glob` 匹配结果默认上限 250 条：`head_limit` 控制返回条数（`0` 表示不限），
-> `offset` 跳过前 N 条，超出时结果尾部附分页提示（v2.0.8+）。
+> `offset` 跳过前 N 条，超出时结果尾部附分页提示（v2.0.8+）。`Grep` 同样支持
+> `head_limit`/`offset` 分页，且输出按路径排序（v2.0.8+），翻页顺序稳定。
 
 ### PowerShell 工具（v2.0.5+，Windows）
 
@@ -311,6 +312,8 @@ group = ToolGroup(
     tools=[QueryTool()],
     mcps=[db_mcp],
 )
+# v2.0.8+：构造时复制传入的 tools/mcps 列表，之后 group.add_tool()
+# 不会原地突变调用方手里的列表
 ```
 
 ## MCPClient — 统一 MCP 客户端
