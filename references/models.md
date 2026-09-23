@@ -17,6 +17,7 @@ from agentscope.credential import (
     MoonshotCredential,
     XAICredential,
     VolcengineCredential,    # v2.0.8+ 火山引擎 Ark
+    TypeSafeCredential,      # v2.0.8+ TypeSafe Jev 分类器（无对话模型）
 )
 ```
 
@@ -471,3 +472,71 @@ TTS 的核心 API：
 > 可能返回空，需调 `synthesize()` 强制输出剩余文本。该模型仍处于开发中，行为细节可能调整。
 
 > 通常无需手动调用 TTS 模型，配合 `TTSMiddleware` 即可把智能体回复自动转语音（见 middleware 文档）。
+
+## 分类器模型 Classifier（v2.0.8+）
+
+独立的 `classifier` 模块，用于**类型化概率判定**：对一段输入（文本或 JSON）一次性回答多个
+问题，返回概率化答案（而非生成文本）。当前实现为 TypeSafe 的 Jev System One API：
+
+```python
+from agentscope.classifier import (
+    ClassifierModelBase,     # 基类
+    JevClassifierModel,      # TypeSafe Jev 实现
+    BinaryQuestion,          # 二分类问题 → 概率
+    ChoiceQuestion,          # 多选一问题 → 选项 + 概率分布
+    ScoreQuestion,           # 有序评分标准问题 → 期望得分 + 概率分布
+    BinaryCriteria,
+    ClassifierResponse, ClassifierUsage,
+)
+```
+
+> 需额外安装：`pip install "agentscope[classifier-jev]"`（`typesafe-sdk>=0.7`）。
+
+### 调用方式
+
+```python
+from agentscope.credential import TypeSafeCredential
+from agentscope.classifier import JevClassifierModel, ChoiceQuestion, ScoreQuestion
+
+credential = TypeSafeCredential(api_key="ts-xxx")
+classifier = JevClassifierModel(
+    credential=credential,
+    model="jev-latest",     # 默认
+    timeout=30.0, max_retries=2, retry_delay=0.5,
+)
+
+response = await classifier(
+    state="这段共享输入文本/JSON",          # 所有问题共享同一份输入
+    questions={
+        "topic": ChoiceQuestion(            # 命名问题，一次可问多个
+            criteria={"tech": "技术问题", "chat": "闲聊"},
+        ),
+        "severity": ScoreQuestion(
+            criteria=["无关紧要", "一般", "紧急"],   # 从 0 分起的有序标准
+        ),
+    },
+)
+response.content["topic"]    # ChoiceAnswer: choice/confidence/probabilities
+response.content["severity"] # ScoreAnswer: score/confidence/legend/probabilities
+response.usage               # ClassifierUsage: time/input_tokens/output_tokens
+```
+
+### 问题与答案类型
+
+| 问题类型 | 判别字段 | 答案类型 | 答案字段 |
+|---|---|---|---|
+| `BinaryQuestion` | `type="binary"` | `BinaryAnswer` | `probability`（正类概率 0–1） |
+| `ChoiceQuestion` | `type="choice"` | `ChoiceAnswer` | `choice` / `confidence` / `probabilities`（各选项概率） |
+| `ScoreQuestion` | `type="score"` | `ScoreAnswer` | `score`（概率加权期望分）/ `confidence` / `legend` / `probabilities`（各整数分位概率） |
+
+- 问题都可选 `instructions`（要判定什么）；`BinaryQuestion.criteria` 用
+  `BinaryCriteria(true=..., false=...)` 描述两个结果的含义，`ChoiceQuestion.criteria`
+  是 `{选项名: 描述}`，`ScoreQuestion.criteria` 是从 0 分起的有序描述列表。
+- `ClassifierResponse.model` 返回实际使用的模型名，`metadata` 携带 provider 无关的附加信息。
+- `TypeSafeCredential`（api_key + 可选 base_url）**只服务分类器**，
+  `get_chat_model_class()` 会抛 `NotImplementedError`。
+
+### 与 ModelRouterMiddleware 配合
+
+分类器最常见的用法是给 `ModelRouterMiddleware` 当路由模型——按用户输入为每条回复
+挑选合适的 chat model，见 [middleware-workspace.md](middleware-workspace.md)。

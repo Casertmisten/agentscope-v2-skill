@@ -12,6 +12,7 @@ from agentscope.middleware import (
     TracingMiddleware,
     TTSMiddleware,
     ReplyBudgetControlMiddleware,
+    ModelRouterMiddleware,
     Mem0Middleware,
     ReMeMiddleware,
     AgenticMemoryMiddleware,
@@ -28,6 +29,7 @@ from agentscope.middleware import (
 | `TracingMiddleware` | OpenTelemetry 追踪，在 reply/model/tool 三层创建 span（见下文） |
 | `TTSMiddleware` | 把 reasoning 文本转语音，注入 `DATA_BLOCK_*` 事件（见下文） |
 | `ReplyBudgetControlMiddleware` | 按 token 权重限制单次 reply 的消耗（达到预算时给智能体 hint）。v2.0.8+ 计数在 `ReplyStartEvent` 时重置，不依赖 `ReplyEndEvent` 清理——结束事件被外层中间件吞掉也不会 KeyError |
+| `ModelRouterMiddleware`（v2.0.8+） | 按用户输入为每条回复选择 chat model 候选（分类器或结构化输出路由，见下文） |
 | `Mem0Middleware` | 基于 [mem0](https://github.com/mem0ai/mem0) 的长期记忆，跨会话记忆用户偏好 |
 | `ReMeMiddleware` | 内嵌 [ReMe](https://github.com/agentscope-ai/ReMe) 应用的长期记忆，自动写回并可工具检索 |
 | `AgenticMemoryMiddleware`（v2.0.4+） | 基于文件系统（Markdown）的长期记忆，由 Agent 自主读写记忆文件 |
@@ -244,6 +246,47 @@ agent = Agent(
 - **非实时 TTS**（`tts_model.realtime=False`）：在每个 `TextBlockEndEvent` 时把累计文本送入 `synthesize`，整段合成后输出。
 - **实时 TTS**（`tts_model.realtime=True`）：每个 `TextBlockDeltaEvent` 通过 `push` 推送，增量音频立即作为 `DataBlockDeltaEvent` 输出（每个 delta 携带增量 base64 PCM，按 `block_id` 串接得到完整音频）。
 - 每个 `DataBlockDeltaEvent.data` 是增量 base64 PCM 块；完整音频 = 所有同 `block_id` 的 delta 解码后拼接。
+
+### ModelRouterMiddleware — 按输入路由 chat model（v2.0.8+）
+
+`ModelRouterMiddleware` 在每条 reply 开始时对**最新的用户消息**做一次分类，从候选
+chat model 中选一个换给 `agent.model`（reply 结束后恢复原模型）。适合"简单问题走小模型、
+难问题走大模型"的成本优化场景：
+
+```python
+from agentscope.middleware import ModelRouterMiddleware, ChatModelCandidate
+
+router = ModelRouterMiddleware(
+    # 路由模型二选一：ClassifierModelBase（如 JevClassifierModel）或普通 ChatModelBase
+    # 传 ChatModelBase 时内部改用 generate_structured_output 做选择
+    classifier_model=jev_classifier,
+    candidates=[
+        ChatModelCandidate(
+            name="fast",
+            model=fast_model,          # ChatModelBase 实例
+            description="简单问答、闲聊、格式转换等低复杂度请求",
+        ),
+        ChatModelCandidate(
+            name="smart",
+            model=smart_model,
+            description="复杂推理、长文写作、代码调试等高难度请求",
+        ),
+    ],
+    # instructions=...,                 # 可选：路由问题的指令（有默认值）
+)
+
+agent = Agent(name="Assistant", system_prompt="...", model=smart_model,
+              middlewares=[router])
+```
+
+行为细节：
+- **每条 reply 只决策一次**，决策结果记入 `state.middle_context`——reply 中途恢复
+  （如用户确认工具权限后继续）保持原路由，不会重新分类。
+- 候选 `name` 必须唯一（重复构造时抛 `ValueError`）。
+- **失败兜底**：路由模型抛错、或选中未知候选名时记 warning 并保持 agent 自己的模型，
+  不影响回复进行。
+- 传普通 `ChatModelBase` 当路由模型时，中间件构造 `{choice: enum}` 的 JSON schema
+  用 `generate_structured_output` 完成选择。
 
 ### Mem0Middleware — mem0 长期记忆（v2.0.3+）
 

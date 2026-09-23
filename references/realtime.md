@@ -212,6 +212,9 @@ LocalAudioTransport(
 )
 ```
 
+v2.0.8+：transport 在同一进程内重启（stop 后再次 start，如重连新会话）时会重置
+输入队列与播放游标，上一会话的哨兵和未播完音频不会泄漏进新会话。
+
 自定义 transport：继承 `TransportBase`，实现 `start()` / `incoming()`（异步产出
 `TransportFrame`）/ 播放接口。浏览器端控制帧应调用 `RealtimeAgent` 的公共方法
 （`send` / `interrupt`），与 Python 调用方走同一条语义路径。

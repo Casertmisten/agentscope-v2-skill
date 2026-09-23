@@ -33,7 +33,9 @@ A2A 协议远程智能体（A2AAgent 客户端适配器 + A2AAgentState，连接
 DashScopeAudioRealtimeModel Qwen-Audio / OpenAIRealtimeModel GPT Realtime / GeminiRealtimeModel Live API /
 XAIRealtimeModel Grok Voice 五路适配器 + RealtimeModelCard + LocalAudioTransport 传输 + VAD 话轮检测 +
 TurnAggregator/TurnMetrics，v2.0.8+）、VolcengineChatModel 火山引擎豆包模型
-（VolcengineCredential + thinking_enable/reasoning_effort，v2.0.8+）、set_id_factory 全局 ID 工厂等。
+（VolcengineCredential + thinking_enable/reasoning_effort，v2.0.8+）、分类器模型 agentscope.classifier
+（Binary/Choice/Score 三类概率化问题 + JevClassifierModel 接 TypeSafe Jev System One，v2.0.8+）、
+ModelRouterMiddleware 按输入路由 chat model、set_id_factory 全局 ID 工厂等。
 ---
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
@@ -136,7 +138,23 @@ Embedding 多模态能力以公开属性 `supports_multimodal` 暴露（DashScop
 `interrupt()` 自动携带当前 `reply_id`（v2.0.8+）、
 各 provider 新增 14 个模型卡（Claude Fable 5.1、GPT-6 Astra、GLM-5.3、DeepSeek v4.1-flash/flash、
 Qwen3.8-flash/Omni-flash/27b、Gemini 3.7/3.8-flash、Grok 4.6、豆包 Seed 2.1 pro/turbo、gemma4，v2.0.8+）、
-Omni 模型音频流、可配置 ID 工厂（set_id_factory）。
+分类器模型 `agentscope.classifier`（类型化概率判定：`BinaryQuestion`/`ChoiceQuestion`/`ScoreQuestion`
+三类问题 → `BinaryAnswer`/`ChoiceAnswer`/`ScoreAnswer` 概率化答案，一次调用共享 state 回答多个命名问题；
+`JevClassifierModel` 接 TypeSafe Jev System One API，`pip install "agentscope[classifier-jev]"`，
+`TypeSafeCredential` 仅服务分类器（无 chat model），v2.0.8+）、
+`ModelRouterMiddleware` 模型路由中间件（每条 reply 开始时按最新用户消息分类，从
+`ChatModelCandidate(name/model/description)` 候选中选模型临时换给 `agent.model`，reply 结束恢复；
+路由模型可为 classifier 或普通 chat model（后者走结构化输出）；路由失败/选中未知候选时
+保持 agent 原模型，恢复中的 reply 保持原路由不重判，v2.0.8+）、
+`set_timestamp_factory` 全局时间戳工厂（Msg/Event/ModelResponse/Task 等所有实体的
+created_at/finished_at 统一走工厂，v2.0.8+）、
+上下文压缩截断工具结果时保留 `metadata` 与 created_at/finished_at 时间戳（v2.0.8+）、
+Write 工具行数统计改用 `splitlines`（与 Read 的行号口径一致）、Bash 解析器对 sed 的每个
+`-e`/`--expression` 表达式逐一过 denylist（组合短标志中混入的 -e 不再漏检，v2.0.8+）、
+xAI 格式化器工具结果中的媒体 DataBlock 回退为占位符字符串（v2.0.8+）、
+DashScope/Gemini Embedding 改异步调用（`asyncio.to_thread` / `client.aio`）不再阻塞事件循环（v2.0.8+）、
+`LocalAudioTransport` 重启时重置输入队列与播放游标（上一会话的哨兵/音频不泄漏进新会话，v2.0.8+）、
+Omni 模型音频流、可配置 ID/时间戳工厂（set_id_factory / set_timestamp_factory）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
 
@@ -221,6 +239,7 @@ asyncio.run(main())
 |---|---|
 | 配置模型和认证 | [references/models.md](references/models.md) |
 | Embedding / TTS 多模态模型（含 GeminiTTSModel、CosyVoice、OpenAITTSModel） | [references/models.md](references/models.md) |
+| 分类器模型（JevClassifierModel 概率判定 / ModelRouterMiddleware 模型路由） | [references/models.md](references/models.md) |
 | 创建消息和内容块 | [references/messages.md](references/messages.md) |
 | 注册工具 (ToolBase，含 Windows PowerShell) | [references/tools.md](references/tools.md) |
 | 集成 MCP | [references/tools.md](references/tools.md) |
@@ -476,6 +495,36 @@ async with A2AAgent(card) as agent:
 远端 Task 的等待输入/取消/失败映射为 `COMPLETED`/`INTERRUPTED`/`ERROR`，详情见
 [references/agent-events.md](references/agent-events.md)。
 
+## 分类器模型 Classifier（v2.0.8+）
+
+`agentscope.classifier` 做**类型化概率判定**：对一份共享输入（文本或 JSON）一次回答多个
+命名问题，返回概率化答案而非生成文本。三类问题对应三类答案——二分类给概率、多选一给
+选项及概率分布、评分标准给概率加权的期望分：
+
+```python
+from agentscope.credential import TypeSafeCredential
+from agentscope.classifier import JevClassifierModel, ChoiceQuestion, ScoreQuestion
+
+classifier = JevClassifierModel(credential=TypeSafeCredential(api_key="ts-xxx"))
+
+res = await classifier(
+    state="共享输入文本或 JSON",
+    questions={
+        "topic": ChoiceQuestion(criteria={"tech": "技术问题", "chat": "闲聊"}),
+        "severity": ScoreQuestion(criteria=["无关紧要", "一般", "紧急"]),
+    },
+)
+res.content["topic"]     # ChoiceAnswer: choice/confidence/probabilities
+res.content["severity"]  # ScoreAnswer: score/confidence/legend/probabilities
+```
+
+- 需 `pip install "agentscope[classifier-jev]"`（typesafe-sdk），模型默认 `jev-latest`。
+- `TypeSafeCredential` 只服务分类器（`get_chat_model_class()` 抛 NotImplementedError）。
+- 典型搭配 `ModelRouterMiddleware`：每条 reply 开始时按最新用户消息从
+  `ChatModelCandidate(name/model/description)` 候选中选模型换给 `agent.model`，
+  结束后恢复；失败或未知候选保持原模型，详情见 [references/middleware-workspace.md](references/middleware-workspace.md)。
+
+
 ## 实时语音 RealtimeAgent（v2.0.8+）
 
 `RealtimeAgent` 是双向流式语音智能体：一侧实时模型、一侧传输（麦克风/扬声器），
@@ -722,3 +771,19 @@ agentscope.set_id_factory(lambda: uuid7().hex)
 注意：
 - **安全相关 token 不受影响**（如 gateway token、Redis 锁 token），始终用 `uuid.uuid4().hex`。
 - 只需在程序启动时调用一次，全局生效。
+
+### set_timestamp_factory — 自定义时间戳生成策略（v2.0.8+）
+
+与 `set_id_factory` 对应，顶层 `agentscope.set_timestamp_factory()` 替换所有实体
+（Msg / Event / ModelResponse / Task 等）`created_at`/`finished_at` 时间戳的生成方式
+（默认 `datetime.now().isoformat()`）。v2.0.8 起全部实体统一走该工厂：
+
+```python
+import agentscope
+from datetime import datetime, timezone
+
+# 全部改用 UTC 时间
+agentscope.set_timestamp_factory(lambda: datetime.now(timezone.utc).isoformat())
+```
+
+只需在程序启动时调用一次，全局生效。
