@@ -157,6 +157,9 @@ store = QdrantStore(path="./qdrant_data")         # 本地磁盘持久化
 #             distance="Cosine")                   # 默认 Cosine,可选 Dot/Euclid/Manhattan
 ```
 
+> v2.0.8+:`metadata_filter` 支持 float 值——Qdrant 的 MatchValue 仅接受 str/int/bool,
+> float 自动改用 Range(`gte`/`lte` 同值)精确匹配;NaN/inf 等非有限浮点值抛 `ValueError`。
+
 ## MilvusLiteStore —— 嵌入式向量库后端（v2.0.4+）
 
 `MilvusLiteStore` 基于 [Milvus Lite](https://milvus.io/docs/milvus_lite.md),**无需独立服务**,

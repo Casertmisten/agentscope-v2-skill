@@ -150,7 +150,13 @@ Qwen3.8-flash/Omni-flash/27b、Gemini 3.7/3.8-flash、Grok 4.6、豆包 Seed 2.1
 created_at/finished_at 统一走工厂，v2.0.8+）、
 上下文压缩截断工具结果时保留 `metadata` 与 created_at/finished_at 时间戳（v2.0.8+）、
 Write 工具行数统计改用 `splitlines`（与 Read 的行号口径一致）、Bash 解析器对 sed 的每个
-`-e`/`--expression` 表达式逐一过 denylist（组合短标志中混入的 -e 不再漏检，v2.0.8+）、
+`-e`/`--expression` 表达式逐一过 denylist（组合短标志中混入的 -e 不再漏检；`--expression=脚本`/
+`--in-place=后缀` 等 `--选项=值` 内联形式同样拆开解析，`--file`（-f 长写法，从文件读脚本）也
+拒绝，v2.0.8+）、
+`FileEmbeddingCache` 单个向量集文件超过 `max_cache_size` 时直接不入缓存并告警（不再按最旧
+驱逐清空整个缓存，v2.0.8+）、
+QdrantStore `metadata_filter` 支持 float 值（MatchValue 仅接受 str/int/bool，float 改用
+Range 区间精确匹配；NaN/inf 等非有限浮点抛 `ValueError`，v2.0.8+）、
 xAI 格式化器工具结果中的媒体 DataBlock 回退为占位符字符串（v2.0.8+）、
 DashScope/Gemini Embedding 改异步调用（`asyncio.to_thread` / `client.aio`）不再阻塞事件循环（v2.0.8+）、
 `LocalAudioTransport` 重启时重置输入队列与播放游标（上一会话的哨兵/音频不泄漏进新会话，v2.0.8+）、

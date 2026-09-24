@@ -343,7 +343,8 @@ response = await emb_model(inputs=["hello", "world"])
 | `GeminiEmbeddingModel` | `str \| DataBlock` | ✅ | 图像/视频/音频/PDF，有每请求元素数限制 |
 | `OllamaEmbeddingModel` | `str` | ❌ | 每次调用新建 client 以避免事件循环绑定问题 |
 
-> DashScope 多模态可配 `embedding_cache=FileEmbeddingCache()` 启用文件缓存。
+> DashScope 多模态可配 `embedding_cache=FileEmbeddingCache()` 启用文件缓存；v2.0.8+ 起
+> 单个向量集文件超过 `max_cache_size` 时直接不入缓存（记 warning），不再因按最旧驱逐而清空整个缓存。
 > 响应解析已兼容服务端省略 `index`、或在 `embedding` 为空时回退到 `dense_embedding` 的情况。
 > v2.0.8+：是否多模态以公开属性 `supports_multimodal` 暴露（DashScope/Gemini 均支持），
 > 可在运行时据此决定输入走文本还是多模态路径。
