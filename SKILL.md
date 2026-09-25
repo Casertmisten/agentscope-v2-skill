@@ -158,6 +158,17 @@ Write 工具行数统计改用 `splitlines`（与 Read 的行号口径一致）�
 QdrantStore `metadata_filter` 支持 float 值（MatchValue 仅接受 str/int/bool，float 改用
 Range 区间精确匹配；NaN/inf 等非有限浮点抛 `ValueError`，v2.0.8+）、
 xAI 格式化器工具结果中的媒体 DataBlock 回退为占位符字符串（v2.0.8+）、
+xAI 多智能体格式化器转发折叠历史消息中的图片（折叠进 `<history>` 的多模态消息
+DataBlock 附加到同一 user 消息，不再丢失，v2.0.8+）、
+`ModelRouterMiddleware` 全新 reply 不再继承上一条 reply 路由到的模型（仅恢复中的
+reply 沿用原路由，v2.0.8+）、
+定时任务 `day_of_week` 数字按标准 cron 语义归一（周日=0/7，构建 APScheduler 触发器前
+映射为星期名，无效取值抛 `ValueError`，v2.0.8+）、
+sandbox gateway 镜像构建改 `uv pip install --no-deps "agentscope"`（依赖由
+requirements.txt 覆盖）、已连接的无状态 MCP 也随 workspace 关闭注销（不再泄漏在
+gateway 上）、
+`WordParser` 表格提取保留单元格内嵌套表格的文本、`AgenticMemoryMiddleware` 检索
+`selected_files` 先去重再截前 5（重复选择不再挤占名额，v2.0.8+）、
 DashScope/Gemini Embedding 改异步调用（`asyncio.to_thread` / `client.aio`）不再阻塞事件循环（v2.0.8+）、
 `LocalAudioTransport` 重启时重置输入队列与播放游标（上一会话的哨兵/音频不泄漏进新会话，v2.0.8+）、
 Omni 模型音频流、可配置 ID/时间戳工厂（set_id_factory / set_timestamp_factory）。

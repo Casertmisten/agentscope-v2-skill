@@ -281,7 +281,8 @@ agent = Agent(name="Assistant", system_prompt="...", model=smart_model,
 
 行为细节：
 - **每条 reply 只决策一次**，决策结果记入 `state.middle_context`——reply 中途恢复
-  （如用户确认工具权限后继续）保持原路由，不会重新分类。
+  （如用户确认工具权限后继续）保持原路由，不会重新分类；全新 reply（带新输入调用）
+  始终重新路由，不会沿用上一条 reply 的路由结果。
 - 候选 `name` 必须唯一（重复构造时抛 `ValueError`）。
 - **失败兜底**：路由模型抛错、或选中未知候选名时记 warning 并保持 agent 自己的模型，
   不影响回复进行。
