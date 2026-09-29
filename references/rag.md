@@ -62,10 +62,10 @@ uv pip install "agentscope[mem0]"
 |---|---|---|
 | `TextParser` | text/markdown 等 | 整个文件为 1 个 Section（不按标题切分） |
 | `PDFParser` | `application/pdf` | 每页 1 个 Section（仅文本，不提取图片） |
-| `PPTParser` | PPTX | 每张幻灯片 1 个 Section（组合形状内的文本同样读取，v2.0.8+） |
+| `PPTParser` | PPTX | 每张幻灯片 1 个 Section（组合形状内的文本同样读取，v2.0.8+；插入占位符的图片保留其内容，未填充占位符不算图片，v2.0.9+） |
 | `ImageParser` | 图像 | 整个文件为 1 个 Section(多模态) |
-| `WordParser`（v2.0.4+） | `.docx` | 按文档顺序,`separate_table=True` 时表格独立成 Section（单元格内嵌套表格的文本同样提取，v2.0.8+） |
-| `ExcelParser`（v2.0.4+） | `.xlsx` / `.xls` | `separate_sheet=True` 时每个 sheet 一个 Section(含 `metadata={"sheet": name}`);默认合并为一个 Section。仅图片/仅表头的 sheet 也保留(图片成 DataBlock Section、表头成表格文本,v2.0.8+) |
+| `WordParser`（v2.0.4+） | `.docx` | 按文档顺序,`separate_table=True` 时表格独立成 Section（单元格内嵌套表格的文本同样提取，v2.0.8+；缺路径/无效文档抛文档化错误，v2.0.9+） |
+| `ExcelParser`（v2.0.4+） | `.xlsx` / `.xls` | `separate_sheet=True` 时每个 sheet 一个 Section(含 `metadata={"sheet": name}`);默认合并为一个 Section。仅图片/仅表头的 sheet 也保留(图片成 DataBlock Section、表头成表格文本,v2.0.8+)；单元格文本保留原样（`"00123"`/`"NA"` 不被 pandas 类型推断与 NA 置换，v2.0.9+） |
 
 Word/Excel Parser 针对表格场景增加配置:
 

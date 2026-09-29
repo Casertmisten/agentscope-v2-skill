@@ -1073,8 +1073,8 @@ bus = InMemoryMessageBus()
 ### 存储后端（Storage）
 
 `create_app` 的 `storage` 参数决定服务化的持久化后端（credentials / agents / sessions / 会话消息 /
-schedules / teams / knowledge bases / knowledge documents / MCP·Skill 用户库 / channels
-共 11 类记录）。两种实现：
+schedules / teams / knowledge bases / knowledge documents / MCP·Skill 用户库 / channels /
+SOPs / SOP runs 共 12 类记录）。两种实现：
 
 ```python
 from agentscope.app.storage import RedisStorage, AsyncSQLAlchemyStorage
@@ -1098,6 +1098,7 @@ storage = AsyncSQLAlchemyStorage(
 - 表定义刻意只用跨方言子集（plain `JSON`、无 generated column、upsert 按方言分发），兼容主流数据库。
 - 频道记录同样落库（v2.0.7+，`channels` 表 + Alembic 迁移 `0003`）：bot 唯一性用
   `platform_bot_id` 列上的 UNIQUE 约束保证，与 Redis 后端能力对齐。
+- SOP 过程与运行记录落库（v2.0.9+，`sops` / `sop_runs` 表 + Alembic 迁移 `0004`）。
 - 附带 Alembic 迁移脚手架（`app/storage/_sql/_alembic/`），`auto_migrate=True` 时自动 `alembic upgrade head`。
 
 > ℹ️ `StorageBase` 是两者的抽象基类，可自行子类化。普通 agent 开发者无需直接操作 storage——
@@ -1118,6 +1119,7 @@ storage = AsyncSQLAlchemyStorage(
 - `mcp_router` — 用户 MCP 库（v2.0.5+）
 - `skill_router` — 用户 Skill 库（v2.0.5+）
 - `channel_router` — IM 频道管理（`/channels`，v2.0.6+）
+- `sop_router` — SOP 标准作业程序管理与运行（`/sops`，v2.0.9+）
 - `health_router` — `/health` 健康检查（v2.0.6+）
 
 ### /health 健康检查端点（v2.0.6+）
@@ -1679,3 +1681,59 @@ app = create_app(
 - `source == "team"` 的 agent(团队 worker)被显式排除在共享之外。
 - 共享关系完全由策略实现决定,不落进 AgentScope 自己的存储 schema。`TeamMember.owner_id` 字段
   就是为此预留,文档原话:"a future admin-share layer can slot in without a schema migration"。
+
+## SOP 服务层（v2.0.9+）
+
+把 SDK 层的 [SOP 标准作业程序](pipeline.md)（`agentscope.sop`）搬到服务层：**过程定义持久化为
+记录、运行由 ChatService 的普通会话驱动、人工裁决走 REST 端点**。纯服务化层功能，
+`create_app` 启动即自动装配（`app.state.sop_service`），无需额外参数。
+
+### 数据模型（`agentscope.app.storage`）
+
+- `SOPData`——过程定义：`name` / `description` / `steps: list[SOPStepDataV1]`（至少一步）/
+  `workspace_grain` / `session_settings`（按 session key 的会话初始配置）。存为 `SOPRecord`。
+- `SOPStepDataV1`——一个里程碑：`subject` / `description`（该步要达成什么）/
+  `executor: SOPAgentRef`（agent_id + session_key，谁在哪个会话里干活）/
+  `verifier: SOPVerifier | None` / `max_attempts`（默认 3）。
+- `SOPVerifier` 二选一（按 `type` 判别）：
+  - `AgentVerifier`——由 agent 裁决（`agent: SOPAgentRef` + `criteria` 附加标准）；
+  - `HumanVerifier`——由人裁决（`question` 问什么），等人通过 `POST /sops/runs/{id}/verdict` 回答。
+- `SOPWorkspaceGrain`——运行分到几个 workspace：`RUN`（整次运行一个，步骤间可交接文件，
+  默认）/ `PER_SESSION_KEY`（每个会话一个，步骤间文件互不可见）。workspace 总是为运行新铸，
+  绝不与其他运行共享。
+- `SOPRunRecord`——一次运行：`sop_id` + `definition`（启动时对定义的**快照**，之后编辑定义
+  不影响在跑的运行）+ `sessions`（session_key → session_id）+ `state: SOPRunState`（SDK 层
+  同款可持久化运行状态）。
+- 同一 `session_key` 不能被两个不同 agent 使用（校验抛 `ValueError`）；共享同一 key 的引用
+  共享同一个会话。
+
+### REST API（`sop_router`）
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| GET | `/sops/schema` | `SOPData` 的 JSON Schema（前端据此渲染过程编辑器） |
+| GET / POST | `/sops` | 列出 / 创建过程 |
+| GET / PATCH / DELETE | `/sops/{sop_id}` | 读取 / 整体替换 / 删除过程 |
+| POST | `/sops/{sop_id}/runs` | 启动一次运行（body 的 `inputs` 由第一步读取） |
+| GET | `/sops/runs` | 列出运行（新→旧） |
+| GET / DELETE | `/sops/runs/{run_id}` | 查看运行（含 `state` 进度）/ 删除 |
+| POST | `/sops/runs/{run_id}/verdict` | 人工裁决：`{step_index, passed, message}`（`message` 原样转达给执行者重试） |
+
+### 运行方式：每步半轮会话
+
+`SOPService` 用 `SOPEngine` 驱动运行，但每个步骤的 executor / verifier 半轮都在**普通 chat
+session** 里发生（与 SDK 层把 agent 对象握在手里不同，服务层的 agent 会话可挂起、可跨进程）：
+
+- executor 的会话被注入 `SubmitHandover` 工具——以结构化输出交出 handover；
+- verifier（agent）的会话被注入 `SubmitVerdict` 工具——裁决 `{passed, message}`；
+- 还没有提交物时给 executor，提交后给 verifier（同一次 turn 只给一个）。
+- `SOPStepSubmitMiddleware`（服务层自动挂上）把步骤 agent 拘在提交工具上：reply 结束却
+  没有成功提交时吞掉 `ReplyEndEvent` 并注入提示让它继续，超过 `max_nudges`（默认 3）次
+  判该次尝试失败（计一次 attempt，而不是永远挂着）。
+- 步骤 turn 挂起（等待权限确认 / 外部执行结果）时，其 dispatch claim 记在 MessageBus 上，
+  后续带答案的 turn 沿 claim 续跑；挂起中的会话收到 inbox 消息（如团队回传）不会误触
+  发续跑，payload 排队等恢复后再排空。
+
+> ℹ️ SDK 层的 `SOPEngine`（本地运行、agent 对象直连）与服务层 SOP（定义存储、REST 管理、
+> 会话化驱动）共享 `agentscope.sop` 的状态模型（`SOPRunState` 等）；选哪个取决于是否需要
+> 服务化部署与人工裁决流程。

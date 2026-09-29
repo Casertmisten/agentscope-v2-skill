@@ -151,8 +151,8 @@ class MyTool(ToolBase):
 
 内置工具（Bash、Read、Write、Edit、Glob、Grep）都有完善的权限检查：
 
-- **Bash** — 命令模式匹配，只读命令（`ls`/`git status` 等）在各模式自动放行；工作目录内文件系统命令（`mkdir`/`rm`/`mv`/`cp` 等，要求所有目标路径都在工作目录内）在 `ACCEPT_EDITS` 和 `DONT_ASK` 模式自动放行；v2.0.5+ 起含注入风险（命令替换/控制流，如 `ls $(rm -rf /)`）的命令**不再判为只读**，会走 bypass-immune 的安全 ASK；`find . -delete`/`-exec`/`-ok` 等会改文件的 find 谓词也不再当只读放行；v2.0.8+ 起 `tee`（会写文件）同样移出只读白名单
-- **Read/Write/Edit** — 文件路径模式匹配，敏感文件保护，`ACCEPT_EDITS`/`DONT_ASK` 模式下自动允许工作目录操作
+- **Bash** — 命令模式匹配，只读命令（`ls`/`git status` 等）在各模式自动放行；工作目录内文件系统命令（`mkdir`/`rm`/`mv`/`cp` 等，要求所有目标路径都在工作目录内）在 `ACCEPT_EDITS` 和 `DONT_ASK` 模式自动放行；v2.0.5+ 起含注入风险（命令替换/控制流，如 `ls $(rm -rf /)`）的命令**不再判为只读**，会走 bypass-immune 的安全 ASK；`find . -delete`/`-exec`/`-ok` 等会改文件的 find 谓词也不再当只读放行；v2.0.8+ 起 `tee`（会写文件）同样移出只读白名单，sed 的 `-e`/`--expression` 逐表达式过 denylist、`--选项=值` 内联形式拆开解析、`--file`（-f）拒绝；v2.0.9+ 起 git 子命令的破坏性参数（`git grep -O<cmd>` 运行命令、`--output=<file>` 写文件等）不再判只读，sed 组合短标志中附着的选项值（`-ne'5p'`/`-e's/a/b/'`/`-i.bak`）也拆开过 denylist
+- **Read/Write/Edit** — 文件路径模式匹配，敏感文件保护，`ACCEPT_EDITS`/`DONT_ASK` 模式下自动允许工作目录操作；v2.0.9+ 起 Edit/Write 落盘后自动刷新文件读缓存（一次 Read 后连续 Edit 不再要求重新读取）
 - **Glob/Grep** — 搜索路径匹配，只读在各模式自动放行，`EXPLORE` 模式下更是全部放行
 
 ### 敏感文件保护

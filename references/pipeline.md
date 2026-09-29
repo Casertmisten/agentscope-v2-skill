@@ -4,7 +4,7 @@
 与 `Agent` 相同的事件流接口（`reply_stream`），可以传给 `launch_console` 等任何接受 agent 的地方。
 
 ```python
-from agentscope.pipeline import GoalPipeline, PipelineProtocol
+from agentscope.pipeline import GoalPipeline, PipelineProtocol, TeamPipeline, TeamMember
 ```
 
 ## PipelineProtocol
@@ -62,6 +62,56 @@ await launch_console(pipe)
   生成合法结构化输出的重试次数（默认 3）。
 - 结构化输出不合法时，pipeline 会以 system-reminder 提示对应 agent 重新调用
   `GenerateStructuredOutput`。
+- v2.0.9+：verifier 拒绝后的重试提示以内容块形式携带**多模态目标**（goal 含图片等
+  DataBlock 时不再被压成纯文本）。
+
+## TeamPipeline — 领导者-成员委派（v2.0.9+）
+
+一个 **leader**（领导者）agent 通过工具调用把任务**委派**给一组 **members**（成员）。
+leader 的 toolkit 被自动注入一个外部工具 `TeamAssign(member, prompt)`：leader 调用它即
+运行对应成员（在其自己的上下文中），成员的最终回复作为工具结果回传——leader 只看到
+摘要，永远看不到成员的中间步骤：
+
+```python
+from agentscope.pipeline import TeamPipeline, TeamMember
+
+team = TeamPipeline(
+    leader=leader,                                  # Agent：分配任务
+    members=[                                       # TeamMember(agent, description)
+        TeamMember(agent=coder, description="写代码、跑测试，返回改动清单"),
+        TeamMember(agent=writer, description="写文档，返回成稿"),
+    ],
+    reset_members=True,   # leader 的 reply 结束后清空各成员 context/summary（默认 True）
+)
+
+async for event in team.reply_stream(UserMsg("user", "给 parser 加缓存并更新文档")):
+    ...   # leader 与所有被委派成员的全部事件
+
+await launch_console(team)   # 交互式驱动整个团队
+```
+
+构造与调度规则：
+
+- `TeamMember(agent, description)`——description 告诉 leader 该成员擅长什么、何时委派、
+  返回什么（拼进工具描述）；成员以其 `agent.name` 标识，**必须彼此唯一且不同于 leader 名**，
+  否则构造抛 `ValueError`。
+- `TeamAssign` 是外部工具（`is_external_tool=True`），由 pipeline 自己执行；委派本身
+  恒为 ALLOW（成员自己的工具仍走各自的权限检查）。`prompt` 要求写全——成员看不到
+  leader 的上下文。
+- **并发与串行**：同一轮被委派的多个成员并发执行；但对**同一成员**的多个委派按调用
+  顺序串行（后一个等前一个结束，即使中间隔着 HITL 暂停）。成员之间不互相通信，
+  结果总是回给 leader；工具结果按 leader 的调用顺序落回其上下文。
+- **结果映射**：成员最终回复的 `finished_reason` 映射为工具结果状态——
+  `COMPLETED`/`EXCEED_MAX_ITERS` → SUCCESS（回复内容取 TextBlock/DataBlock，无内容时
+  给占位提示）、`INTERRUPTED` → INTERRUPTED、`ERROR` → ERROR。
+- **HITL**：按参与者逐个生效——成员挂起在确认请求上时其请求事件原样流出，
+  确认/外部执行结果事件按 `reply_id` 路由回对应成员；此时 leader 也保持挂起在
+  委派上，等成员结束后才继续。`UserInterruptEvent` 中断**所有**挂起的参与者。
+- **取消**：事件流消费方取消时，若 leader 挂起在委派上会先补一次中断，再按
+  `react_config.interruption_raise_cancelled_error` 决定是否向外抛 `CancelledError`。
+- `reset_members=True`（默认）：leader 一条 reply 结束后清空每个成员的
+  `state.context` 与 `state.summary`——同一条 reply 内 leader 可对成员追问，
+  跨 reply 每个成员从头开始；设 `False` 则成员保留跨 reply 的对话记忆。
 
 ## SOP 标准作业程序（v2.0.8+ 主干）
 
@@ -142,3 +192,7 @@ async for event in engine.reply_stream(UserMsg("user", "给 parser 模块加上�
 `reply_stream` 调用是一次尝试**；在传入的 `state` 上记录进度（`phase` / `submission` /
 `verifications`）。步骤需要记住更多东西时，子类化 `SOPStepRunState` 并在类属性
 `state_type` 上声明——额外字段在持久化往返后仍保留（`model_config` 允许 extra 字段）。
+
+> ℹ️ 除本地 `SOPEngine` 外，v2.0.9+ 的服务层还提供了 **SOP 的服务化管理**（`/sops`
+> REST API：过程定义存储、按定义启动运行、人工裁决端点、`SubmitHandover`/`SubmitVerdict`
+> 提交工具），见 [middleware-workspace.md](middleware-workspace.md) 的「SOP 服务层」章节。

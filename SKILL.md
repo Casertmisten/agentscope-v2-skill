@@ -25,8 +25,10 @@ Anthropic thinking_mode 推理控制 / Channel IM 频道接入钉钉、飞书与
 回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR）、跨用户资源共享（ResourceAccessPolicy 抽象）、
 Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 workspace）、
 终端控制台 console（launch_console 交互式终端对话调试 / ConsoleRenderer 事件流渲染，内置 HITL 工具确认与 Ctrl+C 中断，agent 与 pipeline 均可传入）、
-Pipeline 流水线（GoalPipeline 执行者-校验者目标达成循环，对外暴露与 Agent 相同的 reply_stream 事件流）、
-SOP 标准作业程序（agentscope.sop：SOP/SOPStep/SOPEngine 固定里程碑序列 + handover 隔离 + SOPRunState 可持久化运行状态，v2.0.8+）、
+Pipeline 流水线（GoalPipeline 执行者-校验者目标达成循环 + TeamPipeline 领导者-成员委派团队，
+对外暴露与 Agent 相同的 reply_stream 事件流，v2.0.9+）、
+SOP 标准作业程序（agentscope.sop：SOP/SOPStep/SOPEngine 固定里程碑序列 + handover 隔离 + SOPRunState 可持久化运行状态，v2.0.8+；
+服务层 SOP 管理化：/sops REST API 过程存储/运行启动/人工裁决 + SubmitHandover/SubmitVerdict 提交工具，v2.0.9+）、
 终端 UI TUI（launch_tui 全屏 Textual 聊天 + launch_realtime_ui 语音会话界面 + ChatUI/MessagesUI 可嵌入组件，v2.0.8+）、
 A2A 协议远程智能体（A2AAgent 客户端适配器 + A2AAgentState，连接任意 A2A 1.0 服务）、
 实时语音智能体（RealtimeAgent 双向音频流 + agentscope.realtime 模块：DashScopeRealtimeModel Qwen-Omni /
@@ -35,12 +37,13 @@ XAIRealtimeModel Grok Voice 五路适配器 + RealtimeModelCard + LocalAudioTran
 TurnAggregator/TurnMetrics，v2.0.8+）、VolcengineChatModel 火山引擎豆包模型
 （VolcengineCredential + thinking_enable/reasoning_effort，v2.0.8+）、分类器模型 agentscope.classifier
 （Binary/Choice/Score 三类概率化问题 + JevClassifierModel 接 TypeSafe Jev System One，v2.0.8+）、
-ModelRouterMiddleware 按输入路由 chat model、set_id_factory 全局 ID 工厂等。
+ModelRouterMiddleware 按输入路由 chat model、MiniMax 模型（MiniMaxCredential +
+MiniMaxChatModel 接 Anthropic 兼容端点，M3/M2.7/M2.7-highspeed，v2.0.9+）、set_id_factory 全局 ID 工厂等。
 ---
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
 
-AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.8`。
+AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.9`。
 
 **核心特性**：事件驱动架构、权限系统（含 on_check_permission 中间件 hook、批量确认豁免、
 DEFAULT/DONT_ASK 只读快路径）、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
@@ -89,11 +92,25 @@ Skill 按 agent 隔离（`skills/.seed` 模板 + 每 agent 一个分区，惰性
 `ConsoleRenderer` 被动事件渲染器，可嵌入自定义循环消费 `reply_stream`；试运行 / 调试首选入口，无 session 与持久化；
 v2.0.8 `agent` 参数接受 `Agent | PipelineProtocol`）、
 Pipeline 流水线（`GoalPipeline` 执行者-校验者目标达成循环：executor 产出执行报告 → verifier 结构化验收
-pass/fail/impossible → fail 带反馈重试至 `max_iters`；支持 HITL 暂停恢复，对外暴露与 Agent 相同的事件流，v2.0.8）、
+pass/fail/impossible → fail 带反馈重试至 `max_iters`；支持 HITL 暂停恢复，对外暴露与 Agent 相同的事件流，v2.0.8；
+v2.0.9+ verifier 重试提示以内容块保留多模态目标）、
+`TeamPipeline` 领导者-成员委派团队（v2.0.9+）：leader 经自动注入的外部工具 `TeamAssign(member, prompt)`
+把任务委派给 `TeamMember(agent, description)` 成员——成员在自己上下文里跑，最终回复作为工具结果回给
+leader（只见摘要不见中间步骤）；同轮多成员并发、同成员多委派按序串行；HITL 按 `reply_id` 路由到
+挂起参与者（成员挂起则 leader 同步挂起）；`reset_members=True` 每 reply 结束清空成员上下文，
+`UserInterruptEvent` 中断所有挂起参与者、成员回复的 `finished_reason` 映射工具结果状态，v2.0.9+）、
 SOP 标准作业程序（`agentscope.sop`：`SOP` 固定里程碑序列定义 + `SOPStep`（executor 产出 handover /
 verifier 裁决，拒绝带反馈重试至 `max_attempts`）+ `SOPStepBase` 自定义步骤 + `SOPEngine` 运行器
 （形如 agent，HITL 挂起恢复，`SOP_STEP_STARTED/ENDED` 事件）+ `SOPRunState` 可持久化运行状态；
 步骤间仅通过 handover 交接物传递信息，v2.0.8+）、
+SOP 服务层（v2.0.9+）：`/sops` REST API——`SOPData` 过程定义存储（`SOPStepDataV1` 的 executor/verifier
+按 `agent_id + session_key` 引用会话，verifier 为 AgentVerifier 或 HumanVerifier）、
+`POST /sops/{id}/runs` 启动运行（`SOPRunRecord` 持定义快照 + sessions 映射 + SOPRunState）、
+`POST /sops/runs/{id}/verdict` 人工裁决、`GET /sops/schema` 供前端渲染编辑器；
+每步半轮由 ChatService 普通会话驱动——executor 会话注入 `SubmitHandover`、verifier 会话注入
+`SubmitVerdict`，`SOPStepSubmitMiddleware` 强制步骤 agent 以提交工具结束 turn（不提交则 nudge，
+超 `max_nudges` 判失败计一次尝试）；`SOPWorkspaceGrain.RUN`/`PER_SESSION_KEY` 控制运行分几个
+workspace（整跑共享 vs 每会话隔离）；SQL 后端新增 `sops`/`sop_runs` 表（Alembic `0004`））、
 终端 UI TUI（`agentscope.tui`：`launch_tui` 全屏 Textual 交互聊天（Agent / pipeline 均可传入，
 含 HITL 确认/外部执行/中断控件与 `/exit`）+ `launch_realtime_ui` 语音会话界面（RealtimeAgent
 转写显示，v2.0.8+）+ `ChatUI`/`MessagesUI` 可嵌入组件；`pip install "agentscope[tui]"`，v2.0.8+）、
@@ -116,6 +133,11 @@ LocalAudioTransport 传输、可选 VAD 话轮检测、断线自动重连、`Tur
 工具调用与 HITL 确认复用 Agent 事件体系，v2.0.8+）、
 火山引擎豆包模型（`VolcengineChatModel` + `VolcengineCredential`，`thinking_enable`/`reasoning_effort`
 思考参数，v2.0.8+）、
+MiniMax 模型（v2.0.9+）：`MiniMaxCredential`（默认国际站 `api.minimax.io/anthropic`，国内换
+`api.minimax.cn/anthropic`）+ `MiniMaxChatModel`（继承 `AnthropicChatModel` 走 Anthropic 兼容端点，
+`thinking_enable` 自适应思考），模型卡 `MiniMax-M3`（默认，1M 上下文 + 图片/视频输入）/
+`MiniMax-M2.7` / `MiniMax-M2.7-highspeed`（204.8k 上下文，纯文本）、
+Kimi K2.7 Code 系列模型卡启用图片与视频输入（v2.0.9+）、
 on_reply 中间件可吞掉 `ReplyEndEvent` 续跑回复循环（v2.0.6+，最终 `Msg` 仅在事件逃出中间件链后产生；
 `ExceedMaxItersEvent` 同步 deprecated，改查 `ReplyEndEvent.finished_reason`）、
 MCP 有状态客户端支持 close 后重连（v2.0.6+）、
@@ -171,6 +193,22 @@ gateway 上）、
 `selected_files` 先去重再截前 5（重复选择不再挤占名额，v2.0.8+）、
 DashScope/Gemini Embedding 改异步调用（`asyncio.to_thread` / `client.aio`）不再阻塞事件循环（v2.0.8+）、
 `LocalAudioTransport` 重启时重置输入队列与播放游标（上一会话的哨兵/音频不泄漏进新会话，v2.0.8+）、
+`workspace.add_mcp` 返回注册的 client（含 sandbox gateway 代理，v2.0.9+）、
+内置 Edit/Write 落盘后刷新读缓存（连续编辑不再要求先重新 Read，v2.0.9+）、
+Read 工具显式空 `model_input_types=[]` 表示模型不接受原生媒体（不回退默认类型，v2.0.9+）、
+Bash 只读快路径拦截 git 子命令的破坏性参数（`git grep -O<cmd>`/`--output=<file>` 等不再判只读）、
+sed 短选项附着值解析（`-ne'5p'` / `-e's/a/b/'` / `-i.bak` 组合标志拆开过 denylist，v2.0.9+）、
+DeepSeek 格式化器保留 user 消息图片（纯文本模型仍发字符串）、Moonshot 格式化器保留视频、
+xAI 格式化器只转发 `input_types` 声明的图片类型（v2.0.9+）、
+`ExcelParser` 单元格文本保留原样（`"00123"`/`"NA"` 不被 pandas 类型推断与 NA 置换）、
+`PPTParser` 保留插入占位符的图片内容（未填充占位符不算图片）、Word/Excel 解析器错误规范化
+（缺路径/无效文档抛文档化错误，v2.0.9+）、
+上下文压缩 prompt 插值当前时间（与运行时注入同款时间文本，v2.0.9+）、
+A2A reply 被 running-Task 检查拒绝时不消费已观察消息（重试仍能发，v2.0.9+）、
+Embedding/TTS 响应时间戳走配置的时间戳工厂、
+挂起中的服务化会话收到 inbox 消息不再以 None 误触续跑（payload 排队等恢复，v2.0.9+）、
+LocalBackend 在 Windows SelectorEventLoop 下创建子进程的报错附明确提示、
+TUI diff 变更行统计只把首对 `---`/`+++` 当头（内容以 `-`/`+` 开头的行也计数，v2.0.9+）、
 Omni 模型音频流、可配置 ID/时间戳工厂（set_id_factory / set_timestamp_factory）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
@@ -210,7 +248,7 @@ Agent (单一类，reply_stream 返回事件流，reply 返回最终消息)
 | Agent | AgentBase/ReActAgentBase/ReActAgent | 单一 `Agent` 类 |
 | 记忆 | MemoryBase/InMemoryMemory/RedisMemory | `AgentState.context` (list[Msg]) |
 | 格式化器 | FormatterBase/ChatFormatter 等 | `formatter` 模块存在，但由各 model 实现内部使用，Agent 无需手动选 |
-| 管道 | MsgHub/SequentialPipeline/FanoutPipeline | `pipeline` 模块全新设计：`GoalPipeline` 执行者-校验者循环（v2.0.8），其余编排直接用 asyncio |
+| 管道 | MsgHub/SequentialPipeline/FanoutPipeline | `pipeline` 模块全新设计：`GoalPipeline` 执行者-校验者循环 / `TeamPipeline` 领导者-成员委派（v2.0.9），其余编排直接用 asyncio |
 | 工具 | 普通函数 + Toolkit | `ToolBase` 子类 + `Toolkit` |
 | MCP | HttpStatefulClient/StatelessClient 等 | 统一 `MCPClient` |
 | 消息 | Msg(name, role, content) | `UserMsg/AssistantMsg/SystemMsg` 工厂函数 |
@@ -264,8 +302,8 @@ asyncio.run(main())
 | Agent 配置和事件（含结构化输出 / 运行时状态注入 / 错误上报） | [references/agent-events.md](references/agent-events.md) |
 | A2A 协议远程智能体（A2AAgent 客户端适配器 / A2AAgentState） | [references/agent-events.md](references/agent-events.md) |
 | 实时语音（RealtimeAgent / realtime 模型适配器 / Transport / VAD） | [references/realtime.md](references/realtime.md) |
-| Pipeline 流水线（GoalPipeline 执行者-校验者循环） | [references/pipeline.md](references/pipeline.md) |
-| SOP 标准作业程序（SOP/SOPStep/SOPEngine/SOPRunState） | [references/pipeline.md](references/pipeline.md) |
+| Pipeline 流水线（GoalPipeline 执行者-校验者循环 / TeamPipeline 领导者-成员委派） | [references/pipeline.md](references/pipeline.md) |
+| SOP 标准作业程序（SOP/SOPStep/SOPEngine/SOPRunState + 服务层 /sops API） | [references/pipeline.md](references/pipeline.md) |
 | 终端控制台（launch_console 交互调试 / ConsoleRenderer 事件渲染） | [references/agent-events.md](references/agent-events.md) |
 | 终端 UI（launch_tui 全屏聊天 / ChatUI / MessagesUI 组件） | [references/agent-events.md](references/agent-events.md) |
 | 权限和工具组（含 on_check_permission hook） | [references/permissions.md](references/permissions.md) |
@@ -290,6 +328,8 @@ from agentscope.credential import (
     DeepSeekCredential,
     MoonshotCredential,
     XAICredential,
+    VolcengineCredential,   # v2.0.8+ 火山引擎 Ark
+    MiniMaxCredential,      # v2.0.9+ MiniMax（Anthropic 兼容端点）
 )
 
 # 各提供商的 credential
@@ -460,6 +500,24 @@ await launch_console(pipe)    # 交互式调试整个流水线
 
 executor / verifier 通常共享同一个 Workspace（verifier 才能读到 executor 的产物）。详情见
 [references/pipeline.md](references/pipeline.md)。
+
+`TeamPipeline`（v2.0.9+）编排**领导者-成员**团队：leader 通过自动注入的外部工具
+`TeamAssign(member, prompt)` 把任务委派给成员，成员在自己上下文里跑完、最终回复作为工具
+结果回给 leader（leader 只见摘要不见中间步骤）：
+
+```python
+from agentscope.pipeline import TeamPipeline, TeamMember
+
+team = TeamPipeline(
+    leader=leader,
+    members=[TeamMember(agent=coder, description="写代码与测试，返回改动清单")],
+)
+async for event in team.reply_stream(UserMsg("user", "给 parser 加缓存")):
+    ...   # leader 与成员的全部事件；同轮多成员并发，同成员按序串行
+```
+
+成员挂起 HITL 时 leader 同步挂起；`reset_members=True`（默认）每条 reply 结束清空成员上下文。
+详情见 [references/pipeline.md](references/pipeline.md)。
 
 ## SOP 标准作业程序（v2.0.8+）
 

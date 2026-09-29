@@ -17,6 +17,7 @@ from agentscope.credential import (
     MoonshotCredential,
     XAICredential,
     VolcengineCredential,    # v2.0.8+ 火山引擎 Ark
+    MiniMaxCredential,       # v2.0.9+ MiniMax（Anthropic 兼容端点）
     TypeSafeCredential,      # v2.0.8+ TypeSafe Jev 分类器（无对话模型）
 )
 ```
@@ -85,6 +86,7 @@ from agentscope.model import (
     OllamaChatModel,
     XAIChatModel,            # 新增
     VolcengineChatModel,     # v2.0.8+ 火山引擎 Ark（doubao）
+    MiniMaxChatModel,        # v2.0.9+ MiniMax（Anthropic 兼容协议）
 )
 ```
 
@@ -115,6 +117,8 @@ model = credential.get_chat_model_class()(
 > `qwen3.8-omni-flash`（DashScope）、`deepseek-flash`（DeepSeek）、`gemini-3.7-flash` /
 > `gemini-3.8-flash`（Gemini）、`grok-4.6`（xAI）、豆包 `doubao-seed-2-1-pro-260915` /
 > `doubao-seed-2-1-turbo-260628`（Volcengine）、`gemma4` / `qwen3.8-27b`（Ollama），
+> v2.0.9 新增 MiniMax 提供商（`MiniMax-M3` / `MiniMax-M2.7` / `MiniMax-M2.7-highspeed`
+> 三张模型卡），Kimi K2.7 Code 系列模型卡启用图片与视频输入，
 > 均可通过 `credential.list_models()` 查到。`kimi-k3` 在 `MoonshotChatModel` 中额外支持
 > `reasoning_effort: "low"|"high"|"max"` 参数。
 
@@ -190,6 +194,34 @@ model = VolcengineChatModel(
 ```
 
 配套的 `VolcengineChatFormatter` / `VolcengineMultiAgentFormatter` 由模型内部默认使用，无需手动指定。
+
+### MiniMax Chat 模型（v2.0.9+）
+
+`MiniMaxChatModel` 接入 MiniMax 的 **Anthropic 兼容端点**（继承 `AnthropicChatModel`），
+支持自适应思考参数：
+
+```python
+from agentscope.credential import MiniMaxCredential
+from agentscope.model import MiniMaxChatModel
+
+credential = MiniMaxCredential(
+    api_key="xxx",
+    # base_url 默认国际站 https://api.minimax.io/anthropic，
+    # 中国大陆改为 https://api.minimax.cn/anthropic
+)
+model = MiniMaxChatModel(
+    credential=credential,
+    model="MiniMax-M3",                    # 默认推荐（1M 上下文，多模态输入）
+    parameters=MiniMaxChatModel.Parameters(
+        thinking_enable=True,              # 自适应思考
+    ),
+)
+```
+
+- 模型卡：`MiniMax-M3`（1000000 上下文 / 131072 输出，输入支持图片与视频）、
+  `MiniMax-M2.7` / `MiniMax-M2.7-highspeed`（204800 上下文 / 65536 输出，纯文本）。
+- `MiniMaxCredential.get_chat_model_class()` 返回 `MiniMaxChatModel`；
+  配套 `MiniMaxChatFormatter` 由模型内部默认使用。
 
 ### Omni 模型的音频输出（v2.0.2+）
 
