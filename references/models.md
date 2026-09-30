@@ -243,6 +243,9 @@ model = OpenAIChatModel(
 
 产生的音频通过 `reply_stream()` 的 `DATA_BLOCK_*` 事件流式返回；模型生成的原始音频字节**不会**被写入 `state.context`（避免对话记忆膨胀）。可用语音取决于模型卡片（`ModelCard` 的 `voice.suggestions`）——无音频输出的模型会自动隐藏 `voice` 参数。
 
+> v2.0.10+：DashScope Omni 模型流式返回时，`delta.audio.transcript` 中的 spoken 文本会同步追加到
+> 同一文本块（agent 同时收到文本与音频，对齐 OpenAI Chat 模型行为）。
+
 ### 调用方式
 
 ```python
@@ -463,6 +466,10 @@ tts = OpenAITTSModel(
 # stream=False：synthesize() 返回单个聚合的 TTSResponse
 async for resp in await tts.synthesize(text="你好"):
     ...
+
+# v2.0.10+：synthesize(text, **kwargs) 的调用级参数可覆盖 Parameters 默认值
+# （如 voice/response_format/instructions），返回音频的 media_type 按覆盖后实际生效的 response_format 标注
+await tts.synthesize(text="你好", instructions="用兴奋的语气说")
 ```
 
 ### GeminiTTSModel（v2.0.5+）
@@ -497,6 +504,9 @@ TTS 的核心 API：
 - `push(text)` — （仅 realtime）追加文本，返回已就绪的增量音频
 - `connect()` / `close()` — （仅 realtime）连接生命周期，也可用 `async with`
 - `realtime: bool` — 是否支持流式输入模式
+
+> v2.0.10+：DashScopeTTSModel 合成出错（status_code 非 200）时显式抛 `RuntimeError`，
+> 流式/非流式均不再静默吞错返回空音频。
 
 > 当前本地源码导出的是 `DashScopeCosyVoiceTTSModel`，不是旧名
 > `DashScopeCosyVoiceRealtimeTTSModel`。它支持 `cosyvoice-v3-plus` / `cosyvoice-v3-flash` 等模型，

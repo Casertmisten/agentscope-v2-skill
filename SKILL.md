@@ -209,7 +209,19 @@ Embedding/TTS 响应时间戳走配置的时间戳工厂、
 挂起中的服务化会话收到 inbox 消息不再以 None 误触续跑（payload 排队等恢复，v2.0.9+）、
 LocalBackend 在 Windows SelectorEventLoop 下创建子进程的报错附明确提示、
 TUI diff 变更行统计只把首对 `---`/`+++` 当头（内容以 `-`/`+` 开头的行也计数，v2.0.9+）、
-Omni 模型音频流、可配置 ID/时间戳工厂（set_id_factory / set_timestamp_factory）。
+Omni 模型音频流、可配置 ID/时间戳工厂（set_id_factory / set_timestamp_factory）、
+DashScope Omni 流式音频的 spoken transcript 同步追加为文本块（文本不再只藏在音频 delta 里，
+agent 同时收到文本与音频，对齐 OpenAI Chat 模型行为，v2.0.10+）、
+OpenAI TTS 每次调用 `synthesize(**kwargs)` 可覆盖 voice/response_format/instructions 等默认参数
+（返回音频的 media_type 按覆盖后实际生效的 response_format 标注，v2.0.10+）、
+DashScope TTS 合成错误显式抛 `RuntimeError`（流式/非流式 status_code 非 200 不再静默吞错，v2.0.10+）、
+`ExcelParser` 以 `header=None` 读表（首行按数据保留：重复表头不再被 pandas 改名、
+空表头不再变 "Unnamed: ..."，v2.0.10+）、
+`WordParser` 表格省略的首尾单元格（`w:gridBefore`/`w:gridAfter`）以空串补齐
+（缺省列的网格位置不再错位，v2.0.10+）、
+`Msg.append_usage` 消息持有 usage 副本（传入的 `Usage` 对象不被采纳突变，v2.0.10+）、
+`LocalSkillLoader` 以 `utf-8-sig` 读 SKILL.md（Windows 编辑器写入的 BOM 不再隐藏
+frontmatter 起始分隔符，v2.0.10+）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
 

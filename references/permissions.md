@@ -251,6 +251,7 @@ from agentscope.skill import Skill, SkillLoaderBase, LocalSkillLoader
 # 从本地目录加载（directory 下的 SKILL.md）
 loader = LocalSkillLoader(directory="/path/to/skills", scan_subdir=False)
 skills = await loader.list_skills()   # -> list[Skill]
+# SKILL.md 以 utf-8-sig 读取（v2.0.10+）：Windows 编辑器写入的 BOM 不影响 frontmatter 解析
 
 # 自定义 loader：继承 SkillLoaderBase，实现 async list_skills() -> list[Skill]
 ```
