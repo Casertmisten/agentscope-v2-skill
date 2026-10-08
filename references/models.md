@@ -379,7 +379,9 @@ response = await emb_model(inputs=["hello", "world"])
 | `OllamaEmbeddingModel` | `str` | ❌ | 每次调用新建 client 以避免事件循环绑定问题 |
 
 > DashScope 多模态可配 `embedding_cache=FileEmbeddingCache()` 启用文件缓存；v2.0.8+ 起
-> 单个向量集文件超过 `max_cache_size` 时直接不入缓存（记 warning），不再因按最旧驱逐而清空整个缓存。
+> 单个向量集文件超过 `max_cache_size` 时直接不入缓存（记 warning），不再因按最旧驱逐而清空整个缓存；
+> v2.0.10 起 `max_file_number=0` 真正生效（写后不保留任何缓存文件，`None` 才是不限），且新文件
+> 因超过 `max_cache_size` 被拒后，文件数上限仍独立执行。
 > 响应解析已兼容服务端省略 `index`、或在 `embedding` 为空时回退到 `dense_embedding` 的情况。
 > v2.0.8+：是否多模态以公开属性 `supports_multimodal` 暴露（DashScope/Gemini 均支持），
 > 可在运行时据此决定输入走文本还是多模态路径。
@@ -419,6 +421,9 @@ cards = credential.list_tts_models()
 # 非实时：一次性合成
 tts = DashScopeTTSModel(credential=credential, model="qwen3-tts-flash")
 resp: TTSResponse = await tts.synthesize(text="你好")
+# v2.0.10+：synthesize(text, **kwargs) 的调用级参数可覆盖 model/text/voice 等请求参数
+# （api_key 与 stream 由内部强制设置，不可经 kwargs 覆盖）
+resp = await tts.synthesize(text="你好", voice="cherry")
 
 # Qwen3 实时：流式输入，增量输出
 async with DashScopeRealtimeTTSModel(credential=credential) as rt:
@@ -506,7 +511,8 @@ TTS 的核心 API：
 - `realtime: bool` — 是否支持流式输入模式
 
 > v2.0.10+：DashScopeTTSModel 合成出错（status_code 非 200）时显式抛 `RuntimeError`，
-> 流式/非流式均不再静默吞错返回空音频。
+> 流式/非流式均不再静默吞错返回空音频。同期起 `synthesize(**kwargs)` 支持调用级参数
+> 覆盖 model/text/voice 等（api_key 与 stream 内部强制设置，覆盖无效）。
 
 > 当前本地源码导出的是 `DashScopeCosyVoiceTTSModel`，不是旧名
 > `DashScopeCosyVoiceRealtimeTTSModel`。它支持 `cosyvoice-v3-plus` / `cosyvoice-v3-flash` 等模型，

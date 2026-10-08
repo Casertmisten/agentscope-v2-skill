@@ -221,7 +221,21 @@ DashScope TTS 合成错误显式抛 `RuntimeError`（流式/非流式 status_cod
 （缺省列的网格位置不再错位，v2.0.10+）、
 `Msg.append_usage` 消息持有 usage 副本（传入的 `Usage` 对象不被采纳突变，v2.0.10+）、
 `LocalSkillLoader` 以 `utf-8-sig` 读 SKILL.md（Windows 编辑器写入的 BOM 不再隐藏
-frontmatter 起始分隔符，v2.0.10+）。
+frontmatter 起始分隔符，v2.0.10+）、
+DashScope TTS 每次调用 `synthesize(**kwargs)` 可覆盖 model/text/voice 等请求参数
+（api_key 与 stream 由内部强制设置不可覆盖，v2.0.10+）、
+`FileEmbeddingCache` 的 `max_file_number=0` 生效（写后不保留任何缓存文件，`None` 才是
+不限；新文件因超过 `max_cache_size` 被拒后文件数上限仍独立执行，v2.0.10+）、
+内置 Edit 工具拒绝空 `old_string`（schema 加 minLength=1，运行时报错提示空文件改用
+Write 填充，v2.0.10+）、
+内置 Grep 命令在搜索路径前加 `--`（横线开头的路径不再被 rg 解析为选项，v2.0.10+）、
+Anthropic 流式工具调用无参数时以 `{}` 收尾（对齐非流式行为，无参调用不再丢失，v2.0.10+）、
+Ollama 每个工具调用生成独立随机 id（按位置拼接的 id 不再跨轮重复，v2.0.10+）、
+`PDFParser` 逐页提取纳入统一错误处理（pypdf 惰性读取失败同样抛文档化 `ValueError`，v2.0.10+）、
+`ElasticsearchStore` 分页遍历逐次刷新 pit_id（finally 关闭的不再是被轮换抛弃的旧 PIT，v2.0.10+）、
+TracingMiddleware chat span 上报 minimax provider 名（v2.0.10+）、
+服务层 `PATCH /mcp` 重命名经 `MCPClient` 校验（非法名称当场返回 422，不再存成
+后续读取必 500 的坏记录，v2.0.10+）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
 
