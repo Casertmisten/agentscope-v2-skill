@@ -261,7 +261,9 @@ from agentscope.realtime import VADBase, SpeechTransition
 
 - `GET /realtime/models?provider=openai_credential` — 列该 provider 的 realtime 模型卡
   （`credential.list_realtime_models()`）；
-- `GET /realtime/config` — 返回部署提供的 ICE servers（浏览器 RTCPeerConnection 配置）；
+- `GET /realtime/config` — 返回部署提供的 ICE servers（浏览器 RTCPeerConnection 配置；
+  经 `create_app(realtime_ice_servers=[...])` 或环境变量 `AGENTSCOPE_REALTIME_ICE_SERVERS`
+  以 JSON 数组配置，未配置时为空列表，浏览器走默认 STUN）；
 - `POST /realtime/sessions/{session_id}/offer` — body `{agent_id, sdp, type: "offer"}`，
   服务端经 `RealtimeService` 把持久化 session 组装成带完整 toolkit 的 `RealtimeAgent`
   （复用 session 锁，与文本对话互斥），aiortc 协商后返回 `{sdp, type: "answer"}`。

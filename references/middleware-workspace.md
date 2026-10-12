@@ -965,8 +965,8 @@ app = create_app(
     message_bus=RedisMessageBus(),         # 消息总线（必填）
     workspace_manager=LocalWorkspaceManager(basedir="./workspaces"),  # 工作区管理器（必填）
     knowledge_base_manager=None,           # 可选：启用知识库服务层
-    knowledge_parsers=None,                # 可选：Parser 列表或 media_type -> Parser dict
-    knowledge_chunker=None,                # 可选：默认 ApproxTokenChunker()
+    knowledge_parsers=None,                # 可选：Parser 列表或 media_type -> Parser dict（默认 [TextParser()]）
+    knowledge_chunkers=None,               # 可选：Chunker 类列表（默认 [ApproxTokenChunker]；v2.0.8+，注意传类不传实例）
     blob_store=None,                       # 可选：默认 LocalBlobStore("./blobs")
     enable_index_worker=True,              # True=API 进程内嵌索引 worker
     extra_credentials=[MyCredential],      # 自定义 Credential 类
@@ -980,6 +980,9 @@ app = create_app(
     skill_hubs=None,                       # Skill hub 列表（v2.0.5+）
     channels=None,                         # Channel 适配器类列表（v2.0.6+，如 [DingTalkChannel, FeishuChannel, DiscordChannel]）
     enable_channel_worker=True,            # 本进程是否持有 channel 长连接（v2.0.7+，多副本部署设 False）
+    enable_scheduler=True,                 # 是否启用定时任务调度（v2.0.8+）
+    download_secret=None,                  # 下载令牌签名密钥（v2.0.8+，缺省自动生成）
+    realtime_ice_servers=None,             # 浏览器 WebRTC ICE servers（v2.0.10+，供 GET /realtime/config）
 )
 
 # 独立运行
@@ -991,8 +994,11 @@ root.mount("/agentscope", app)
 ```
 
 > ⚠️ 当前签名中 `storage` / `message_bus` / `workspace_manager` / `knowledge_base_manager` /
-> `knowledge_parsers` / `knowledge_chunker` / `blob_store` / `enable_index_worker` 位于 `*` 之前；
-> `extra_*` / `custom_*` / `title` / `version` 均为**仅关键字参数**。推荐全部用关键字传参。
+> `knowledge_parsers` / `knowledge_chunkers` / `blob_store` / `enable_index_worker` / `mcp_hubs` /
+> `skill_hubs` 位于 `*` 之前（可按位置传参）；`enable_channel_worker` / `enable_scheduler` /
+> `extra_*` / `custom_*` / `channels` / `resource_access_policy` / `download_secret` /
+> `realtime_ice_servers` / `title` / `version` 均为**仅关键字参数**。推荐全部用关键字传参。
+> 旧参数名 `knowledge_chunker`（传实例）已 deprecated，传入仅取其类并告警，请改用 `knowledge_chunkers`。
 >
 > 注意区分两类 middleware 参数：
 > - `extra_middlewares` —— 加到 **FastAPI 应用**层（ASGI 中间件，处理 CORS/鉴权/限流等 HTTP 层逻辑）。
@@ -1037,7 +1043,7 @@ app = create_app(
     workspace_manager=LocalWorkspaceManager(basedir="./workspaces"),
     knowledge_base_manager=kb_manager,
     knowledge_parsers=[TextParser(), PDFParser()],
-    knowledge_chunker=ApproxTokenChunker(chunk_size=512, overlap=50),
+    knowledge_chunkers=[ApproxTokenChunker],  # 传 Chunker 类列表（非实例），默认 [ApproxTokenChunker]
     blob_store=LocalBlobStore(root_dir="./blobs"),
     enable_index_worker=True,      # 单进程/开发：API lifespan 内启动 IndexWorker + sweeper
 )
@@ -1164,7 +1170,9 @@ storage = AsyncSQLAlchemyStorage(
    （`type` = realtime 适配器类型、`credential_id` 引用已存凭证、`model`、`parameters`
    如 voice / turn_detection）。候选可先经 `GET /realtime/models?provider=...`
    （即 `credential.list_realtime_models()`）与 `GET /realtime/config`（部署提供的
-   ICE servers）查询。
+   ICE servers）查询。ICE servers 经 `create_app(realtime_ice_servers=[{urls, username,
+   credential}, ...])` 或环境变量 `AGENTSCOPE_REALTIME_ICE_SERVERS`（JSON 数组）配置
+   （v2.0.10+）；未配置时返回空列表，浏览器走默认 STUN。
 2. **WebRTC 协商**：浏览器 `RTCPeerConnection` 生成 offer 后
    `POST /realtime/sessions/{session_id}/offer`（body `{agent_id, sdp}`），服务端返回
    answer SDP。`RealtimeService` 按该 session 的工具配置组装 `RealtimeAgent`

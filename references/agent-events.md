@@ -672,6 +672,7 @@ if msg.finished_reason == ReplyFinishedReason.ERROR:
 | `UPSTREAM` | 5xx | 服务端错误 |
 | `CONNECTION` | — | 网络中断/超时 |
 | `INTERNAL` | — | 框架内部错误 |
+| `SETUP` | — | 服务化装配期失败（组装 agent / toolkit / 知识库 / 模型解析，v2.0.8+） |
 | `UNKNOWN` | — | 未能分类 |
 
 要点：

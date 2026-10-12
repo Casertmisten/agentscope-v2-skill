@@ -918,7 +918,8 @@ if msg.finished_reason == ReplyFinishedReason.ERROR:
 
 - `ReplyFinishedReason` 新增 `ERROR`（原 `COMPLETED/INTERRUPTED/EXCEED_MAX_ITERS`）。
 - `ErrorType` 按 HTTP 语义分类：`authentication(401)` / `permission(403)` / `rate_limit(429)` /
-  `invalid_request(400/422)` / `upstream(5xx)` / `connection` / `internal` / `unknown`。
+  `invalid_request(400/422)` / `upstream(5xx)` / `connection` / `internal` / `setup`（服务化
+  装配期失败，v2.0.8+）/ `unknown`。
 - `ErrorInfo.message` 是通用文案，不泄露原始异常/密钥。
 - 服务化（`create_app`）的 SSE 流也会合成 `finished_reason=ERROR` 的 `ReplyEndEvent`。
 
