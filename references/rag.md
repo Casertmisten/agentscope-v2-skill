@@ -496,4 +496,4 @@ async def main():
 
 服务端细节见 `examples/agent_service`(后端)与 `examples/web_ui`(聊天式 UI,含知识库管理面板)。本 skill 聚焦库模式 API;若走服务模式,库模式里的 `KnowledgeBase`/Parser/Chunker/embedding 概念完全一致,只是改由服务层调度。
 
-v2.0.10 服务化索引 worker 修复:查 Parser 前先规范化文档 content-type(剥掉 `;charset=` 等参数并转小写,`application/pdf; charset=utf-8` 不再因匹配不到 parser 而失败);`LOG_LEVEL` 环境变量先解析再配置 worker logger(非法值按默认级别并告警)。
+v2.0.10 服务化索引 worker 修复:查 Parser 前先规范化文档 content-type(剥掉 `;charset=` 等参数并转小写,`application/pdf; charset=utf-8` 不再因匹配不到 parser 而失败);`LOG_LEVEL` 环境变量先 strip+大写归一再配置 worker logger,空值回退 `INFO`(小写 `debug` 等配置不再导致启动崩溃)。原生 Excel 错误单元格同步修复:错误值(`#N/A`/`#DIV/0!` 等)被 openpyxl 读成 NaN 后从工作簿恢复回原位,仅 `.xlsx`(`.xls` 不适用)。

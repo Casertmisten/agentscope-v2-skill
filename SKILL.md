@@ -284,7 +284,8 @@ RAG Parser 修复：Word 表格单元格内嵌图片提取、PPT 文本框软换
 错误统一抛文档化 `ValueError`、Excel 原生错误单元格（`#N/A`/`#REF!` 等）保留原样（v2.0.10+）、
 LocalWorkspace 安装 skill 时目录名冲突检查加文件系统探测（大小写不敏感文件系统上不再覆盖
 已有同名目录，v2.0.10+）、
-服务化修复一组：删除定时任务后通知 owner session、定时任务默认 `started_at` 锚定带时区绝对时刻
+服务化修复一组：删除定时任务后经 `scheduler_manager.notify_changed` 通知持有定时器的
+节点（消息总线尽力通知，丢失由周期 reconcile 兜底）、定时任务默认 `started_at` 锚定带时区绝对时刻
 （naive 时间曾被按 schedule 时区误读导致开始时刻漂移）、被拒 chat run 的协程关闭、Redis 订阅
 清理防取消异常、Docker 初始化失败清理、OpenSandbox 未设置的 exit code 视为失败、workspace
 skill 删除幂等（v2.0.10+）、

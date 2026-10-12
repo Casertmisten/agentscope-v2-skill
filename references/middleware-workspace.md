@@ -1176,7 +1176,8 @@ storage = AsyncSQLAlchemyStorage(
 4. 未配置 `realtime_model_config` 或配置了 `turn_detection="none"`（浏览器语音
    模式不支持）返回 409；aiortc 缺失返回 503（随 `agentscope[service]` extra 安装）。
 
-服务化运行期其他 v2.0.10 修复：删除定时任务后向 owner session 发通知；
+服务化运行期其他 v2.0.10 修复：删除定时任务后经 `scheduler_manager.notify_changed`
+通知持有定时器的节点（消息总线尽力通知，丢失由周期 reconcile 兜底）；
 定时任务默认开始时间锚定为带时区的绝对时刻；被拒 chat run 的协程不再悬挂；
 Redis 订阅清理不受任务取消影响；Docker workspace 初始化失败清理半成品；
 OpenSandbox 未设置的 exit code 按失败处理；workspace skill 删除幂等。
