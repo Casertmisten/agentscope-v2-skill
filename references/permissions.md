@@ -163,6 +163,9 @@ dangerous_files = [".bashrc", ".gitconfig", ...]
 dangerous_directories = [".git", ".ssh", ...]
 ```
 
+v2.0.10+ 检查前先把路径**解析符号链接**再比对（`ln -s ~/.ssh ~/proj/link` 伪装的
+路径不再绕过检查）；本地删除符号链接时 unlink 链接本身、不跟随目标。
+
 ## ToolGroup 管理
 
 工具组允许将相关工具打包，智能体通过元工具（ResetTools）按需激活：

@@ -21,7 +21,8 @@ BlobStore / 内嵌或独立索引 worker / MessageBus 消息总线：
 RedisMessageBus / InMemoryMessageBus / Session Status 端点（含 list_sessions 内联 status + 裁剪 context） /
 AsyncSQLAlchemyStorage 持久化 / /health 健康检查端点 / workspace 文件读取与状态端点（WorkspaceService +
 DirectoryListing + WorkspaceStatus/GitStatus + session cwd 工作目录）/ extra_agent_middlewares 工厂 workspace 参数 /
-Anthropic thinking_mode 推理控制 / Channel IM 频道接入钉钉、飞书与 Discord / Skill 按 agent 分区隔离）Agent 中断（UserInterruptEvent）、
+Anthropic thinking_mode 推理控制 / Channel IM 频道接入钉钉、飞书与 Discord / Skill 按 agent 分区隔离 / 服务化实时语音
+/realtime 端点：浏览器 WebRTC offer/answer 接 RealtimeAgent（v2.0.10+））、Agent 中断（UserInterruptEvent）、
 回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR）、跨用户资源共享（ResourceAccessPolicy 抽象）、
 Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 workspace）、
 终端控制台 console（launch_console 交互式终端对话调试 / ConsoleRenderer 事件流渲染，内置 HITL 工具确认与 Ctrl+C 中断，agent 与 pipeline 均可传入）、
@@ -33,17 +34,19 @@ SOP 标准作业程序（agentscope.sop：SOP/SOPStep/SOPEngine 固定里程碑�
 A2A 协议远程智能体（A2AAgent 客户端适配器 + A2AAgentState，连接任意 A2A 1.0 服务）、
 实时语音智能体（RealtimeAgent 双向音频流 + agentscope.realtime 模块：DashScopeRealtimeModel Qwen-Omni /
 DashScopeAudioRealtimeModel Qwen-Audio / OpenAIRealtimeModel GPT Realtime / GeminiRealtimeModel Live API /
-XAIRealtimeModel Grok Voice 五路适配器 + RealtimeModelCard + LocalAudioTransport 传输 + VAD 话轮检测 +
-TurnAggregator/TurnMetrics，v2.0.8+）、VolcengineChatModel 火山引擎豆包模型
+XAIRealtimeModel Grok Voice 五路适配器 + RealtimeModelCard + Transport Frame 传输（AudioFrame/ControlFrame）+
+VAD 话轮检测 + TurnAggregator/TurnMetrics + send() 离散输入入口，v2.0.8+；新增 Qwen3.8 Omni Realtime /
+Qwen-Audio 3.1 Realtime 模型卡与服务层浏览器 WebRTC 语音端点，v2.0.10+）、VolcengineChatModel 火山引擎豆包模型
 （VolcengineCredential + thinking_enable/reasoning_effort，v2.0.8+）、分类器模型 agentscope.classifier
-（Binary/Choice/Score 三类概率化问题 + JevClassifierModel 接 TypeSafe Jev System One，v2.0.8+）、
+（Binary/Choice/Score 三类概率化问题 + JevClassifierModel 接 TypeSafe Jev System One，v2.0.8+；
+OpenAIClassifierModel 接 OpenAI Decisions API + RefusalAnswer 拒答类型，v2.0.10+）、
 ModelRouterMiddleware 按输入路由 chat model、MiniMax 模型（MiniMaxCredential +
 MiniMaxChatModel 接 Anthropic 兼容端点，M3/M2.7/M2.7-highspeed，v2.0.9+）、set_id_factory 全局 ID 工厂等。
 ---
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
 
-AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.9`。
+AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.10dev`。
 
 **核心特性**：事件驱动架构、权限系统（含 on_check_permission 中间件 hook、批量确认豁免、
 DEFAULT/DONT_ASK 只读快路径）、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
@@ -179,7 +182,8 @@ Write 工具行数统计改用 `splitlines`（与 Read 的行号口径一致）�
 驱逐清空整个缓存，v2.0.8+）、
 QdrantStore `metadata_filter` 支持 float 值（MatchValue 仅接受 str/int/bool，float 改用
 Range 区间精确匹配；NaN/inf 等非有限浮点抛 `ValueError`，v2.0.8+）、
-xAI 格式化器工具结果中的媒体 DataBlock 回退为占位符字符串（v2.0.8+）、
+xAI 格式化器工具结果中的媒体 DataBlock 回退为占位符字符串（v2.0.8+；v2.0.10 起改为
+提升 URL 图片为真实 image part，见下）、
 xAI 多智能体格式化器转发折叠历史消息中的图片（折叠进 `<history>` 的多模态消息
 DataBlock 附加到同一 user 消息，不再丢失，v2.0.8+）、
 `ModelRouterMiddleware` 全新 reply 不再继承上一条 reply 路由到的模型（仅恢复中的
@@ -235,7 +239,61 @@ Ollama 每个工具调用生成独立随机 id（按位置拼接的 id 不再跨
 `ElasticsearchStore` 分页遍历逐次刷新 pit_id（finally 关闭的不再是被轮换抛弃的旧 PIT，v2.0.10+）、
 TracingMiddleware chat span 上报 minimax provider 名（v2.0.10+）、
 服务层 `PATCH /mcp` 重命名经 `MCPClient` 校验（非法名称当场返回 422，不再存成
-后续读取必 500 的坏记录，v2.0.10+）。
+后续读取必 500 的坏记录，v2.0.10+）、
+OpenAI Decisions API 分类器 `OpenAIClassifierModel`（默认模型 `gpt-6-luna`，需 `openai>=3.26.0`；
+Binary/Choice/Score 问题分别映射 predicate/choice/score，`instructions` 缺省用问题名、
+Binary criteria 拼进 instructions；输入支持文本/JSON/内联图片（仅 `Base64Source` 的 image DataBlock）；
+provider 拒答返回新答案类型 `RefusalAnswer`——单题拒答不影响同请求其他答案，v2.0.10+）、
+服务化实时语音 `/realtime` 路由（`GET /realtime/models?provider=` 列 realtime 模型卡、
+`GET /realtime/config` 返回浏览器 WebRTC ICE servers、`POST /realtime/sessions/{id}/offer`
+以浏览器 SDP offer 换 answer：`RealtimeService` 把持久化 session 组装成带完整 toolkit 的
+`RealtimeAgent`（走 session 锁，同 session 重复 offer 自动关闭旧连接；未配置
+`SessionConfig.realtime_model_config` 或 `turn_detection="none"` 返回 409；WebRTC 栈 aiortc
+随 `agentscope[service]` extra 提供，v2.0.10+）、
+Credential 新增 `get_realtime_model_classes()` / `list_realtime_models()`（与 chat/embedding/tts
+同构的 realtime 模型发现入口，v2.0.10+）、
+RealtimeAgent 传输层 Frame 化（`TransportBase.incoming()` 产出 `TransportFrame` =
+`AudioFrame` | `ControlFrame`，`ControlFrameType` 三值 TEXT/USER_CONFIRM/INTERRUPT 分别对应
+`send()` 文本轮 / 权限确认 / 中断三个公共方法，远端浏览器与 Python 调用方走同一语义路径；
+播放侧 `send_audio(pcm, item_id)` / `clear_audio()`（返回打断前 `PlayoutPosition`）/ `playout()`；
+`send(inputs)` 是非音频输入唯一入口（str/Msg 文本轮、`UserConfirmResultEvent`、`UserInterruptEvent`，
+文本轮要求 `model.supports_text_input`，provider 不可达抛 `ModelDisconnectedError`）；输入/输出/VAD
+采样率不一致在 `reply_stream` 开始即抛 `ValueError`，v2.0.10+）、
+新增 realtime 模型卡 `qwen3.8-omni-flash-realtime`（Qwen-Omni 系，支持 image/jpeg 输入与工具）与
+`qwen-audio-3.1-realtime-plus`（Qwen-Audio 系）；DashScope realtime 协议 audio format 统一 `pcm`、
+输入转写默认模型换 `qwen3-asr-flash-realtime`（v2.0.10+）、
+无参工具调用收到空参数 payload 直接按 `{}` 执行（部分 provider 流式完全不给参数不再 JSON
+解析失败，v2.0.10+）、
+`FunctionTool(is_state_injected=True)` 注入参数 `_agent_state` 从推断的 input_schema 剔除
+（模型不再看到注入参数；返回 awaitable 的同步函数同样被 await，此前仅识别 async def，v2.0.10+）、
+内置 Write 父目录改由 backend 创建（写到不存在的目录不再报错）；内置 Read 未显式传
+`model_input_types` 时每实例拷贝默认列表（多实例互不污染）；Bash 解析器把分离式点号 sed
+备份后缀（`-i .bak`）识别为后缀；glob 参数值形似选项时按字面值匹配、含 `./` 当前目录段的
+模式正确处理；危险路径检查前先解析符号链接、本地 unlink 符号链接不跟随目标（v2.0.10+）、
+`ReplyBudgetControlMiddleware` 预算耗尽时若结构化输出尚未完成，注入专用提示且 tool_choice
+只开放结构化输出工具（不再一刀切禁工具把结构化输出卡死，v2.0.10+）、
+DeepSeek/Moonshot 设置 thinking.type 默认值前拷贝 extra_body（调用方传入的 dict 不被突变，v2.0.10+）、
+OpenAI Chat 非流式音频输出包真实 WAV 头（RIFF/data chunk 尺寸准确，可落盘直接播放，v2.0.10+）、
+OpenAI Responses API 流错误显式传播、refusal 文本与 reasoning 文本保留（不再静默丢弃，v2.0.10+）、
+Gemini 可空 cache token usage 归一、Anthropic 流式 usage 时间戳刷新、OpenAI embedding 响应缺 usage
+容忍（v2.0.10+）、
+CosyVoice 合成回调错误显式传播（不再静默吞错，v2.0.10+）、
+服务化索引 worker 查 parser 前规范化文档 content-type（剥 `;charset=` 参数并小写）、
+`LOG_LEVEL` 先解析再配置 worker logger（v2.0.10+）、
+RAG Parser 修复：Word 表格单元格内嵌图片提取、PPT 文本框软换行规范化、PPTX 延迟 XML 读取
+错误统一抛文档化 `ValueError`、Excel 原生错误单元格（`#N/A`/`#REF!` 等）保留原样（v2.0.10+）、
+LocalWorkspace 安装 skill 时目录名冲突检查加文件系统探测（大小写不敏感文件系统上不再覆盖
+已有同名目录，v2.0.10+）、
+服务化修复一组：删除定时任务后通知 owner session、定时任务默认 `started_at` 锚定带时区绝对时刻
+（naive 时间曾被按 schedule 时区误读导致开始时刻漂移）、被拒 chat run 的协程关闭、Redis 订阅
+清理防取消异常、Docker 初始化失败清理、OpenSandbox 未设置的 exit code 视为失败、workspace
+skill 删除幂等（v2.0.10+）、
+TeamPipeline 某成员组失败时先 join/取消同轮兄弟任务再结束（异常保留、任务不泄漏，v2.0.10+）、
+SOPEngine 恢复时若步骤已自标 FAILED 则结束该运行不再重试（v2.0.10+）、
+xAI chat 格式化器把工具结果中的 URL 图片媒体提升为真实 image part（此前为占位符字符串，v2.0.10+）、
+Moonshot 格式化器跳过空 thinking 块、DashScope realtime 及时释放已完成工具调用名（重名工具调用
+不再冲突）、自有 streamable-HTTP MCP client 改经 SDK factory 构建、Hub 解析 BOM 前缀的 skill
+frontmatter（v2.0.10+）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
 
@@ -621,6 +679,10 @@ res.content["severity"]  # ScoreAnswer: score/confidence/legend/probabilities
 
 - 需 `pip install "agentscope[classifier-jev]"`（typesafe-sdk），模型默认 `jev-latest`。
 - `TypeSafeCredential` 只服务分类器（`get_chat_model_class()` 抛 NotImplementedError）。
+- v2.0.10+ 新增 `OpenAIClassifierModel` 接 OpenAI Decisions API
+  （需 `openai>=3.26.0`，默认模型 `gpt-6-luna`，用 `OpenAICredential`）：输入额外支持
+  `list[TextBlock | DataBlock]`（图片须 `Base64Source`）；provider 拒答某题时该题返回
+  `RefusalAnswer`，不影响同请求其他答案。
 - 典型搭配 `ModelRouterMiddleware`：每条 reply 开始时按最新用户消息从
   `ChatModelCandidate(name/model/description)` 候选中选模型换给 `agent.model`，
   结束后恢复；失败或未知候选保持原模型，详情见 [references/middleware-workspace.md](references/middleware-workspace.md)。
@@ -645,14 +707,19 @@ async with agent:                              # 模型会话
             print(event)                       # 文本增量 / 工具调用 / 确认请求...
 ```
 
-- 模型适配器：`DashScopeRealtimeModel`（Qwen-Omni）/ `DashScopeAudioRealtimeModel`（Qwen-Audio，
-  支持文本输入与 smart_turn 端点）/ `OpenAIRealtimeModel`（GPT Realtime）/
+- 模型适配器：`DashScopeRealtimeModel`（Qwen-Omni，含 `qwen3.8-omni-flash-realtime`，v2.0.10+）/
+  `DashScopeAudioRealtimeModel`（Qwen-Audio，支持文本输入与 smart_turn 端点，含
+  `qwen-audio-3.1-realtime-plus`，v2.0.10+）/ `OpenAIRealtimeModel`（GPT Realtime）/
   `GeminiRealtimeModel`（Live API）/ `XAIRealtimeModel`（Grok Voice），
   统一构造 `(model, credential, parameters, model_card)`；
+- 非音频输入统一走 `agent.send(...)`：文本轮（str/Msg，先打断进行中的回复）、
+  HITL 确认结果（`UserConfirmResultEvent`）、中断（`UserInterruptEvent`）；
 - 断线自动重连：provider 关闭会话后，下一句话音触发重连（指数退避，历史 transcript
   拼进 instructions 恢复上下文）；
 - 可选本地 VAD（`vad=` 参数，开启时关闭 provider 自身话轮检测）、`TurnAggregator`
   清洗用户话轮、`agent.last_turn_metrics` 查看每轮时延分解；
+- 服务化后浏览器可直接语音对话：`POST /realtime/sessions/{id}/offer` WebRTC 协商
+  （v2.0.10+），见 [references/middleware-workspace.md](references/middleware-workspace.md)；
 - 详情见 [references/realtime.md](references/realtime.md)。
 
 ## 消息创建

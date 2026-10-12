@@ -61,11 +61,11 @@ uv pip install "agentscope[mem0]"
 | Parser | 支持格式 | Section 粒度 |
 |---|---|---|
 | `TextParser` | text/markdown 等 | 整个文件为 1 个 Section（不按标题切分） |
-| `PDFParser` | `application/pdf` | 每页 1 个 Section（仅文本，不提取图片） |
-| `PPTParser` | PPTX | 每张幻灯片 1 个 Section（组合形状内的文本同样读取，v2.0.8+；插入占位符的图片保留其内容，未填充占位符不算图片，v2.0.9+） |
+| `PDFParser` | `application/pdf` | 每页 1 个 Section（仅文本，不提取图片；pypdf 惰性读取失败同样抛文档化 `ValueError`，v2.0.10+） |
+| `PPTParser` | PPTX | 每张幻灯片 1 个 Section（组合形状内的文本同样读取，v2.0.8+；插入占位符的图片保留其内容，未填充占位符不算图片，v2.0.9+；文本框软换行规范化、延迟 XML 读取错误统一抛文档化 `ValueError`，v2.0.10+） |
 | `ImageParser` | 图像 | 整个文件为 1 个 Section(多模态) |
-| `WordParser`（v2.0.4+） | `.docx` | 按文档顺序,`separate_table=True` 时表格独立成 Section（单元格内嵌套表格的文本同样提取，v2.0.8+；缺路径/无效文档抛文档化错误，v2.0.9+；表格省略的首尾单元格以空串补齐，`w:gridBefore`/`w:gridAfter` 缺省列的网格位置不错位，v2.0.10+） |
-| `ExcelParser`（v2.0.4+） | `.xlsx` / `.xls` | `separate_sheet=True` 时每个 sheet 一个 Section(含 `metadata={"sheet": name}`);默认合并为一个 Section。仅图片/仅表头的 sheet 也保留(图片成 DataBlock Section、表头成表格文本,v2.0.8+)；单元格文本保留原样（`"00123"`/`"NA"` 不被 pandas 类型推断与 NA 置换，v2.0.9+）；以 `header=None` 读表,首行按数据保留（重复表头不被 pandas 改名、空表头不变 "Unnamed: ..."，v2.0.10+） |
+| `WordParser`（v2.0.4+） | `.docx` | 按文档顺序,`separate_table=True` 时表格独立成 Section（单元格内嵌套表格的文本同样提取，v2.0.8+；缺路径/无效文档抛文档化错误，v2.0.9+；表格省略的首尾单元格以空串补齐，`w:gridBefore`/`w:gridAfter` 缺省列的网格位置不错位、表格单元格内嵌图片提取，v2.0.10+） |
+| `ExcelParser`（v2.0.4+） | `.xlsx` / `.xls` | `separate_sheet=True` 时每个 sheet 一个 Section(含 `metadata={"sheet": name}`);默认合并为一个 Section。仅图片/仅表头的 sheet 也保留(图片成 DataBlock Section、表头成表格文本,v2.0.8+)；单元格文本保留原样（`"00123"`/`"NA"` 不被 pandas 类型推断与 NA 置换，v2.0.9+）；以 `header=None` 读表,首行按数据保留（重复表头不被 pandas 改名、空表头不变 "Unnamed: ..."，v2.0.10+）；原生错误单元格（`#N/A`/`#REF!` 等）保留原样不被清空（v2.0.10+） |
 
 Word/Excel Parser 针对表格场景增加配置:
 
@@ -495,3 +495,5 @@ async def main():
 上述都是**库模式**——你在单进程里自己驱动管线。完整服务模式由 `create_app(knowledge_base_manager=...)` 托管:提供知识库 CRUD、文档上传、后台索引 worker、检索等 REST 接口,并通过消息总线分发索引任务(支持嵌入式 worker 或独立 worker 部署)。
 
 服务端细节见 `examples/agent_service`(后端)与 `examples/web_ui`(聊天式 UI,含知识库管理面板)。本 skill 聚焦库模式 API;若走服务模式,库模式里的 `KnowledgeBase`/Parser/Chunker/embedding 概念完全一致,只是改由服务层调度。
+
+v2.0.10 服务化索引 worker 修复:查 Parser 前先规范化文档 content-type(剥掉 `;charset=` 等参数并转小写,`application/pdf; charset=utf-8` 不再因匹配不到 parser 而失败);`LOG_LEVEL` 环境变量先解析再配置 worker logger(非法值按默认级别并告警)。

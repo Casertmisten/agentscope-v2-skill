@@ -100,7 +100,8 @@ await launch_console(team)   # 交互式驱动整个团队
   leader 的上下文。
 - **并发与串行**：同一轮被委派的多个成员并发执行；但对**同一成员**的多个委派按调用
   顺序串行（后一个等前一个结束，即使中间隔着 HITL 暂停）。成员之间不互相通信，
-  结果总是回给 leader；工具结果按 leader 的调用顺序落回其上下文。
+  结果总是回给 leader；工具结果按 leader 的调用顺序落回其上下文。v2.0.10+ 某成员组
+  抛异常时先 join/取消同轮兄弟任务再结束该轮（异常保留向外抛，任务不泄漏）。
 - **结果映射**：成员最终回复的 `finished_reason` 映射为工具结果状态——
   `COMPLETED`/`EXCEED_MAX_ITERS` → SUCCESS（回复内容取 TextBlock/DataBlock，无内容时
   给占位提示）、`INTERRUPTED` → INTERRUPTED、`ERROR` → ERROR。
@@ -167,6 +168,8 @@ async for event in engine.reply_stream(UserMsg("user", "给 parser 模块加上�
   （步骤进入 `AWAITING`，不持有协程）；把确认/执行结果事件再传入 `engine.reply_stream(...)`
   即可从挂起处继续——答案会路由到当时挂起的那个步骤。
 - `UserInterruptEvent` 放弃当前尝试（不计入尝试预算），步骤回到 `PENDING` 等待全新开始。
+- v2.0.10+ 步骤在运行中把自身标为 FAILED（如自定义步骤判定不可恢复）时，
+  恢复运行不再重试该步而是结束整个运行（与 AWAITING 一样直接返回）。
 - 每步开始/结束时发 `CustomEvent`：`SOP_STEP_STARTED`（value 含 step / attempt）与
   `SOP_STEP_ENDED`（value 含 step / phase）。
 - 步骤定义与运行状态可各自演化：`SOPEngine(sop, state)` 续接时若 state 的步数与 sop 不符

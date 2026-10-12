@@ -273,6 +273,8 @@ async for event in agent.reply_stream(user_msg):
 注意：
 - 模型原生音频由 `DATA_BLOCK_*` 传递，**不会**写入 `state.context`（避免记忆膨胀）。
 - 也可以用 `TTSMiddleware` 把任意文本回复转成同样的 `DATA_BLOCK_*` 音频流（见 middleware 文档），此时数据来自 TTS 模型而非对话模型。
+- v2.0.10+ OpenAI Chat 模型**非流式**音频输出包真实 WAV 头（RIFF/data chunk 尺寸按实际长度写，
+  落盘即是可播放的 .wav；流式输出仍用 0xFFFFFFFF 占位尺寸的头，边收边播）。
 
 ### 构建最终消息
 

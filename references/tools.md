@@ -49,6 +49,15 @@ toolkit = Toolkit(tools=[Bash(), Read(), Write(), Edit()])
 > ℹ️ `Glob` 匹配结果默认上限 250 条：`head_limit` 控制返回条数（`0` 表示不限），
 > `offset` 跳过前 N 条，超出时结果尾部附分页提示（v2.0.8+）。`Grep` 同样支持
 > `head_limit`/`offset` 分页，且输出按路径排序（v2.0.8+），翻页顺序稳定。
+> v2.0.10+：glob 参数值形似选项时按字面值匹配（如 `pattern="-foo"` 不再被当成
+> 选项），含 `./` 当前目录段的模式正确处理。
+
+> ℹ️ 内置工具其他 v2.0.10 行为：`Write` 写入路径的父目录由 backend 自动创建
+> （写到不存在的目录不再报错）；`Read` 未显式传 `model_input_types` 时每实例
+> 拷贝默认列表（多实例互不污染）；无参工具调用收到空参数 payload 直接按 `{}`
+> 执行（部分 provider 流式完全不给参数不再解析失败）；Bash 解析器把分离式点号
+> sed 备份后缀（`-i .bak`）识别为后缀；危险路径检查前先解析符号链接，本地
+> `unlink` 符号链接不跟随目标。
 
 ### PowerShell 工具（v2.0.5+，Windows）
 
@@ -152,12 +161,15 @@ toolkit = Toolkit(tools=[FunctionTool(add_numbers)])
 
 - 支持同步/异步函数，返回 `ToolChunk`（非流式）或 `AsyncGenerator[ToolChunk]`/`Generator[ToolChunk]`（流式）。
 - 也可以直接返回 `str`、`dict`、列表等普通对象，`FunctionTool` 会自动转换成文本 `ToolChunk`。
+- v2.0.10+ 返回 awaitable 的**同步**函数同样被正确 await（此前仅识别 `async def`）。
 - `FunctionTool(func, name=..., description=..., is_concurrency_safe=True, is_read_only=False, ...)` 可覆盖默认属性。
 - v2.0.7+ 支持传入 `input_schema` 覆盖自动生成的 schema：JSON schema dict 或 pydantic `BaseModel` 子类
   （经 `model_json_schema()` 转换并移除 `title` 字段）；为 `None`（默认）时仍从函数签名/docstring 生成，
   约束（枚举、取值范围等）用 `typing.Literal` 或 `typing.Annotated[int, Field(ge=0, le=10)]` 表达。
 - v2.0.8 支持构造参数 `permission=PermissionDecision(behavior=..., message=...)`
   直接指定权限决策；不传时默认 `ASK`（要求用户确认，见 permissions 文档）。
+- v2.0.10+ `is_state_injected=True` 时注入参数 `_agent_state` 从自动推断的 schema 中
+  剔除（模型只看到业务参数，AgentState 在调用时由框架注入）。
 
 **方式 2：继承 ToolBase — 需要权限检查/状态注入等高级能力**
 

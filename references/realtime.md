@@ -124,8 +124,8 @@ from agentscope.realtime import (
 
 | 适配器 | credential | 模型（yaml 卡片） |
 |---|---|---|
-| `DashScopeRealtimeModel` | `DashScopeCredential` | `qwen-omni-turbo-realtime`、`qwen3-omni-flash-realtime`、`qwen3.5-omni-flash-realtime`、`qwen3.5-omni-plus-realtime` |
-| `DashScopeAudioRealtimeModel` | `DashScopeCredential` | `qwen-audio-3.0-realtime-flash`、`qwen-audio-3.0-realtime-plus` |
+| `DashScopeRealtimeModel` | `DashScopeCredential` | `qwen-omni-turbo-realtime`、`qwen3-omni-flash-realtime`、`qwen3.5-omni-flash-realtime`、`qwen3.5-omni-plus-realtime`、`qwen3.8-omni-flash-realtime`（v2.0.10+，支持 image/jpeg 输入与工具） |
+| `DashScopeAudioRealtimeModel` | `DashScopeCredential` | `qwen-audio-3.0-realtime-flash`、`qwen-audio-3.0-realtime-plus`、`qwen-audio-3.1-realtime-plus`（v2.0.10+） |
 | `OpenAIRealtimeModel` | `OpenAICredential` | `gpt-realtime-1.5`、`gpt-realtime-2`、`gpt-realtime-2.1`、`gpt-realtime-2.1-mini` |
 | `GeminiRealtimeModel` | `GeminiCredential` | `gemini-2.5-flash-native-audio-preview-12-2025`、`gemini-3.1-flash-live-preview` |
 | `XAIRealtimeModel` | `XAICredential` | `grok-voice-latest`、`grok-voice-think-fast-2.0` |
@@ -133,7 +133,10 @@ from agentscope.realtime import (
 `DashScopeAudioRealtimeModel` 是 `DashScopeRealtimeModel` 的子类，差异：
 `supports_text_input=True`（可在会话中注入文本轮）、话轮检测用 `smart_turn`
 端点（`turn_detection: "server_vad"|"smart_turn"|"none"`，`voiceprint_audio_urls`
-声纹参考仅 `smart_turn` 使用）。
+声纹参考仅 `smart_turn` 使用）；请求回复时带 `modalities: ["text", "audio"]` 覆盖
+（v2.0.10+，基类则发裸 `response.create`）。v2.0.10 起协议细节：音频格式统一
+`input_audio_format`/`output_audio_format: "pcm"`（不再带采样率后缀）、输入转写
+默认模型 `qwen3-asr-flash-realtime`（原 `gummy-realtime-v1`）。
 
 各适配器的 `Parameters`（音色、VAD 阈值、`max_history_turns` 等）不同，
 通过 `RealtimeModelCard.parameter_schema` 或 `ModelClass.list_models()` 查看字段。
@@ -188,15 +191,31 @@ class MyRealtimeModel(RealtimeModelBase):
 
 ```python
 from agentscope.realtime import (
-    TransportBase,          # 抽象基类：start/incoming/outgoing/__aenter__
+    TransportBase,          # 抽象基类：start/close/incoming/send_audio/clear_audio/playout
     LocalAudioTransport,    # 本地声卡（sounddevice）
-    AudioFrame,             # PCM16 单声道音频帧
-    ControlFrame,           # 控制帧（打字/暂停等信令）
-    ControlFrameType,
+    AudioFrame,             # PCM16 单声道音频帧（上游用户音频）
+    ControlFrame,           # 控制帧：type + data
+    ControlFrameType,       # TEXT / USER_CONFIRM / INTERRUPT
     TransportFrame,         # AudioFrame | ControlFrame 联合
     PlayoutPosition,        # 播放进度（item_id + 已播放毫秒/文本前缀）
 )
 ```
+
+`TransportBase` 的完整接口（v2.0.10 Frame 化）：
+
+- `input_sample_rate` / `output_sample_rate` — 声明两侧采样率，须与模型一致；
+- `start()` / `close()`（也可 `async with`）— 生命周期归 transport 的创建者；
+- `incoming()` — `AsyncIterator[TransportFrame]`：上游帧（用户音频 + 控制信令）
+  直到 transport 关闭；
+- `send_audio(pcm, item_id)` — 播放助手音频（归属到 `item_id` 便于播放进度归因）；
+- `clear_audio()` — 清空待播队列，返回打断前的 `PlayoutPosition`；
+- `playout()` — 不打断地查当前播放位置。
+
+`ControlFrameType` 三个成员与 `RealtimeAgent` 的公共方法一一对应——远端客户端
+（浏览器）通过 datachannel 发控制帧与 Python 调用方直接调方法走同一条语义路径：
+`TEXT`（打字的用户轮 → `send()`）、`USER_CONFIRM`（HITL 权限确认 →
+`UserConfirmResultEvent`）、`INTERRUPT`（按停止键 → `interrupt()`；区别于说话
+打断，后者由 provider/VAD 话轮检测触发）。
 
 `LocalAudioTransport` 基于 `sounddevice`（PortAudio），麦克风采集回调在音频线程上运行、
 经 `call_soon_threadsafe` 交还事件循环；播放进度统计与浏览器 AudioWorklet 同一语义：
@@ -234,3 +253,20 @@ from agentscope.realtime import VADBase, SpeechTransition
 
 - 工具 schema 与 instructions 仅在 `connect()` 时发送一次；会话中途激活工具组 / 安装
   skill（ResetTools、meta tool）要等**下一次 connect**（重连）才生效。
+
+## 服务化实时语音（v2.0.10+ 主干）
+
+服务化（`create_app`）后浏览器可直接与持久化 session 语音对话，WebRTC 协商端点在
+`/realtime` 路由（详见 [middleware-workspace.md](middleware-workspace.md)）：
+
+- `GET /realtime/models?provider=openai_credential` — 列该 provider 的 realtime 模型卡
+  （`credential.list_realtime_models()`）；
+- `GET /realtime/config` — 返回部署提供的 ICE servers（浏览器 RTCPeerConnection 配置）；
+- `POST /realtime/sessions/{session_id}/offer` — body `{agent_id, sdp, type: "offer"}`，
+  服务端经 `RealtimeService` 把持久化 session 组装成带完整 toolkit 的 `RealtimeAgent`
+  （复用 session 锁，与文本对话互斥），aiortc 协商后返回 `{sdp, type: "answer"}`。
+
+前提：session 已通过 `PATCH /sessions/{id}` 配置 `realtime_model_config`
+（`type`/`credential_id`/`model`/`parameters`，引用已存的 credential）；未配置或
+`turn_detection="none"`（浏览器语音模式不支持）返回 409；同一 session 重复 offer
+会先关闭旧连接。WebRTC 栈（aiortc）随 `agentscope[service]` extra 安装。

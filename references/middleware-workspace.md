@@ -28,7 +28,7 @@ from agentscope.middleware import (
 |---|---|
 | `TracingMiddleware` | OpenTelemetry 追踪，在 reply/model/tool 三层创建 span（见下文） |
 | `TTSMiddleware` | 把 reasoning 文本转语音，注入 `DATA_BLOCK_*` 事件（见下文） |
-| `ReplyBudgetControlMiddleware` | 按 token 权重限制单次 reply 的消耗（达到预算时给智能体 hint）。v2.0.8+ 计数在 `ReplyStartEvent` 时重置，不依赖 `ReplyEndEvent` 清理——结束事件被外层中间件吞掉也不会 KeyError |
+| `ReplyBudgetControlMiddleware` | 按 token 权重限制单次 reply 的消耗（达到预算时给智能体 hint）。v2.0.8+ 计数在 `ReplyStartEvent` 时重置，不依赖 `ReplyEndEvent` 清理——结束事件被外层中间件吞掉也不会 KeyError；v2.0.10+ 预算耗尽时若该 reply 尚欠结构化输出，hint 改为专用提示且 `tool_choice` 只开放结构化输出工具（不再一刀切禁工具导致结构化输出无法完成） |
 | `ModelRouterMiddleware`（v2.0.8+） | 按用户输入为每条回复选择 chat model 候选（分类器或结构化输出路由，见下文） |
 | `Mem0Middleware` | 基于 [mem0](https://github.com/mem0ai/mem0) 的长期记忆，跨会话记忆用户偏好 |
 | `ReMeMiddleware` | 内嵌 [ReMe](https://github.com/agentscope-ai/ReMe) 应用的长期记忆，自动写回并可工具检索 |
@@ -1120,6 +1120,7 @@ storage = AsyncSQLAlchemyStorage(
 - `skill_router` — 用户 Skill 库（v2.0.5+）
 - `channel_router` — IM 频道管理（`/channels`，v2.0.6+）
 - `sop_router` — SOP 标准作业程序管理与运行（`/sops`，v2.0.9+）
+- `realtime_router` — 实时语音模型发现与浏览器 WebRTC 协商（`/realtime`，v2.0.10+）
 - `health_router` — `/health` 健康检查（v2.0.6+）
 
 ### /health 健康检查端点（v2.0.6+）
@@ -1153,6 +1154,32 @@ storage = AsyncSQLAlchemyStorage(
 - **核心用途**：捕获 sub-app 误挂（`root.mount("/agentscope", app)`）。Starlette 不运行被挂载子 app 的
   lifespan，导致所有 lifespan 组件缺失、业务端点全部失效；此端点会把这种静默误配置变成一个明确的 503 信号。
 - 需要 `X-User-ID` 鉴权（与其它业务端点一致）。
+
+### 服务化实时语音 /realtime（v2.0.10+ 主干）
+
+浏览器对持久化 session 发起语音对话的完整链路（模型侧概念见
+[realtime.md](realtime.md)）：
+
+1. **配置模型**：`PATCH /sessions/{id}` 设置 `realtime_model_config`
+   （`type` = realtime 适配器类型、`credential_id` 引用已存凭证、`model`、`parameters`
+   如 voice / turn_detection）。候选可先经 `GET /realtime/models?provider=...`
+   （即 `credential.list_realtime_models()`）与 `GET /realtime/config`（部署提供的
+   ICE servers）查询。
+2. **WebRTC 协商**：浏览器 `RTCPeerConnection` 生成 offer 后
+   `POST /realtime/sessions/{session_id}/offer`（body `{agent_id, sdp}`），服务端返回
+   answer SDP。`RealtimeService` 按该 session 的工具配置组装 `RealtimeAgent`
+   （workspace、团队角色、channel 工具等同文本对话），音频经
+   `WebRTCAudioTransport`（aiortc）双向转发；浏览器侧通过名为 `control` 的
+   datachannel 发 `ControlFrame`（文本轮 / HITL 确认 / 中断）。
+3. **会话互斥**：语音运行同样占用 session 锁（与文本 chat run 互斥，409）；
+   同一 session 发起新 offer 会自动关闭上一个连接。
+4. 未配置 `realtime_model_config` 或配置了 `turn_detection="none"`（浏览器语音
+   模式不支持）返回 409；aiortc 缺失返回 503（随 `agentscope[service]` extra 安装）。
+
+服务化运行期其他 v2.0.10 修复：删除定时任务后向 owner session 发通知；
+定时任务默认开始时间锚定为带时区的绝对时刻；被拒 chat run 的协程不再悬挂；
+Redis 订阅清理不受任务取消影响；Docker workspace 初始化失败清理半成品；
+OpenSandbox 未设置的 exit code 按失败处理；workspace skill 删除幂等。
 
 ### workspace 产物文件读取与状态端点（v2.0.6+）
 

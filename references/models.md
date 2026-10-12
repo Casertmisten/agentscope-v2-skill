@@ -54,6 +54,10 @@ emb_cls = credential.get_embedding_model_class()    # -> DashScopeEmbeddingModel
 tts_classes = credential.get_tts_model_classes()    # -> list[TTSModelBase 子类]
 tts_cards = credential.list_tts_models()            # -> list[TTSModelCard]
 # 注意：TTS 返回的是「列表」（一个提供商可能有多个模型，如普通/实时两个）
+
+# Realtime 实时语音模型（v2.0.10+）
+rt_classes = credential.get_realtime_model_classes()   # -> list[RealtimeModelBase 子类]
+rt_cards = credential.list_realtime_models()           # -> list[RealtimeModelCard]
 ```
 
 > 各提供商支持的能力不同：DashScope 同时支持对话/Embedding/TTS；OpenAI/Gemini/Ollama 支持 Embedding（`get_embedding_model_class()`）；多数提供商的 TTS 列表为空。
@@ -525,17 +529,20 @@ TTS 的核心 API：
 ## 分类器模型 Classifier（v2.0.8+）
 
 独立的 `classifier` 模块，用于**类型化概率判定**：对一段输入（文本或 JSON）一次性回答多个
-问题，返回概率化答案（而非生成文本）。当前实现为 TypeSafe 的 Jev System One API：
+问题，返回概率化答案（而非生成文本）。两路实现：TypeSafe 的 Jev System One API（v2.0.8+）
+与 OpenAI Decisions API（v2.0.10+）：
 
 ```python
 from agentscope.classifier import (
     ClassifierModelBase,     # 基类
     JevClassifierModel,      # TypeSafe Jev 实现
+    OpenAIClassifierModel,   # v2.0.10+ OpenAI Decisions API 实现
     BinaryQuestion,          # 二分类问题 → 概率
     ChoiceQuestion,          # 多选一问题 → 选项 + 概率分布
     ScoreQuestion,           # 有序评分标准问题 → 期望得分 + 概率分布
     BinaryCriteria,
     ClassifierResponse, ClassifierUsage,
+    RefusalAnswer,           # v2.0.10+ 单题拒答（不影响其他答案）
 )
 ```
 
@@ -577,6 +584,7 @@ response.usage               # ClassifierUsage: time/input_tokens/output_tokens
 | `BinaryQuestion` | `type="binary"` | `BinaryAnswer` | `probability`（正类概率 0–1） |
 | `ChoiceQuestion` | `type="choice"` | `ChoiceAnswer` | `choice` / `confidence` / `probabilities`（各选项概率） |
 | `ScoreQuestion` | `type="score"` | `ScoreAnswer` | `score`（概率加权期望分）/ `confidence` / `legend` / `probabilities`（各整数分位概率） |
+| —（provider 拒答） | — | `RefusalAnswer`（v2.0.10+） | 无字段；仅拒答的那一题返回它，同请求其他答案照常 |
 
 - 问题都可选 `instructions`（要判定什么）；`BinaryQuestion.criteria` 用
   `BinaryCriteria(true=..., false=...)` 描述两个结果的含义，`ChoiceQuestion.criteria`
@@ -584,6 +592,33 @@ response.usage               # ClassifierUsage: time/input_tokens/output_tokens
 - `ClassifierResponse.model` 返回实际使用的模型名，`metadata` 携带 provider 无关的附加信息。
 - `TypeSafeCredential`（api_key + 可选 base_url）**只服务分类器**，
   `get_chat_model_class()` 会抛 `NotImplementedError`。
+
+### OpenAIClassifierModel — OpenAI Decisions API（v2.0.10+）
+
+```python
+from agentscope.credential import OpenAICredential
+from agentscope.classifier import OpenAIClassifierModel, BinaryQuestion
+
+classifier = OpenAIClassifierModel(
+    credential=OpenAICredential(api_key="sk-xxx"),
+    model="gpt-6-luna",     # 默认
+    timeout=30.0, max_retries=2,
+)
+
+# state 额外支持 list[TextBlock | DataBlock]（图片须 Base64Source，URL 源不支持）
+response = await classifier(
+    state="共享输入文本 / dict（序列化为 JSON）/ 文本+图片块列表",
+    questions={"urgent": BinaryQuestion(criteria=BinaryCriteria(
+        true="需要立即处理", false="可以等待",
+    ))},
+)
+response.content["urgent"]  # BinaryAnswer 或 RefusalAnswer
+```
+
+- 需 `openai>=3.26.0`（低版本构造时抛 `ImportError` 指明升级命令）。
+- 问题映射：Binary → `predicate`（criteria 的 true/false 描述拼进 instructions）、
+  Choice → `choice`、Score → `score`；`instructions` 缺省用问题名。
+- `**kwargs` 透传 `client.decisions.create`（`safety_identifier` / `extra_headers` 等）。
 
 ### 与 ModelRouterMiddleware 配合
 
