@@ -46,7 +46,7 @@ MiniMaxChatModel 接 Anthropic 兼容端点，M3/M2.7/M2.7-highspeed，v2.0.9+�
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
 
-AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.10dev`。
+AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.10`。
 
 **核心特性**：事件驱动架构、权限系统（含 on_check_permission 中间件 hook、批量确认豁免、
 DEFAULT/DONT_ASK 只读快路径）、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
@@ -233,7 +233,8 @@ DashScope TTS 每次调用 `synthesize(**kwargs)` 可覆盖 model/text/voice 等
 内置 Edit 工具拒绝空 `old_string`（schema 加 minLength=1，运行时报错提示空文件改用
 Write 填充，v2.0.10+）、
 内置 Grep 命令在搜索路径前加 `--`（横线开头的路径不再被 rg 解析为选项，v2.0.10+）、
-Anthropic 流式工具调用无参数时以 `{}` 收尾（对齐非流式行为，无参调用不再丢失，v2.0.10+）、
+Anthropic / OpenAI Responses 流式工具调用无参数时以 `{}` 收尾（对齐各自非流式行为，
+无参调用不再丢失，v2.0.10+）、
 Ollama 每个工具调用生成独立随机 id（按位置拼接的 id 不再跨轮重复，v2.0.10+）、
 `PDFParser` 逐页提取纳入统一错误处理（pypdf 惰性读取失败同样抛文档化 `ValueError`，v2.0.10+）、
 `ElasticsearchStore` 分页遍历逐次刷新 pit_id（finally 关闭的不再是被轮换抛弃的旧 PIT，v2.0.10+）、
@@ -274,6 +275,8 @@ RealtimeAgent 传输层 Frame 化（`TransportBase.incoming()` 产出 `Transport
 只开放结构化输出工具（不再一刀切禁工具把结构化输出卡死，v2.0.10+）、
 DeepSeek/Moonshot 设置 thinking.type 默认值前拷贝 extra_body（调用方传入的 dict 不被突变，v2.0.10+）、
 OpenAI Chat 非流式音频输出包真实 WAV 头（RIFF/data chunk 尺寸准确，可落盘直接播放，v2.0.10+）、
+流式音频累加的最终块把占位 WAV 头（0xFFFFFFFF）重写为真实 chunk 尺寸（流式与非流式
+落盘均为合法 WAV；非规范 44 字节布局原样保留，v2.0.10+）、
 OpenAI Responses API 流错误显式传播、refusal 文本与 reasoning 文本保留（不再静默丢弃，v2.0.10+）、
 Gemini 可空 cache token usage 归一、Anthropic 流式 usage 时间戳刷新、OpenAI embedding 响应缺 usage
 容忍（v2.0.10+）、
@@ -294,7 +297,18 @@ SOPEngine 恢复时若步骤已自标 FAILED 则结束该运行不再重试（v2
 xAI chat 格式化器把工具结果中的 URL 图片媒体提升为真实 image part（此前为占位符字符串，v2.0.10+）、
 Moonshot 格式化器跳过空 thinking 块、DashScope realtime 及时释放已完成工具调用名（重名工具调用
 不再冲突）、自有 streamable-HTTP MCP client 改经 SDK factory 构建、Hub 解析 BOM 前缀的 skill
-frontmatter（v2.0.10+）。
+frontmatter（v2.0.10+）、
+`TTSModelBase` 成为真正的抽象基类（继承 `ABC`，未实现抽象方法的子类在实例化时即报错，v2.0.10+）、
+GeminiChatModel 尊重调用方传入的 per-call config（此前 `**config_kwargs` 在 merge 前部会被
+模型级默认值覆盖，现调用方 config 优先，v2.0.10+）、
+Moonshot 缓存 prompt tokens 改从 `usage.prompt_tokens_details.cached_tokens` 读取
+（此前读顶层 `usage.cached_tokens` 恒为 0；details 缺失回退 0，v2.0.10+）、
+OllamaEmbeddingModel 的 embedding_cache 按 host 隔离（解析后的 endpoint——含 `OLLAMA_HOST`
+解析——纳入缓存 key 但不进请求 payload，不同端点同名模型不再互相命中缓存，v2.0.10+）、
+ChatModelBase 公共流 `aclose()` 等待底层 provider 流清理完成（HTTP 连接等资源真正释放后
+才返回，v2.0.10+）、
+context.jsonl 归档时嵌套媒体一并卸载（`ToolResultBlock.output` 与 `HintBlock.hint` 列表里的
+内联 base64 DataBlock 同样提取到 `data/` 并改写为 `workspace://` URL，JSONL 行宽保持有界，v2.0.10+）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
 

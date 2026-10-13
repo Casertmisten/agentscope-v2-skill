@@ -250,6 +250,9 @@ model = OpenAIChatModel(
 > v2.0.10+：DashScope Omni 模型流式返回时，`delta.audio.transcript` 中的 spoken 文本会同步追加到
 > 同一文本块（agent 同时收到文本与音频，对齐 OpenAI Chat 模型行为）。
 
+> v2.0.10+：流式音频各 delta 以占位 WAV 头（chunk 尺寸 0xFFFFFFFF）开头，累加产出的最终块会把
+> RIFF/data chunk 尺寸重写为真实值——流式与非流式一样，落盘即为可直接播放的合法 WAV。
+
 ### 调用方式
 
 ```python
@@ -380,7 +383,7 @@ response = await emb_model(inputs=["hello", "world"])
 | `OpenAIEmbeddingModel` | `str` | ❌ | `pass_dimensions=False` 适配不支持该字段的 OpenAI 兼容后端（部分 vLLM/Ollama） |
 | `DashScopeEmbeddingModel` | `str \| DataBlock` | ✅ | 按模型名前缀路由：`text-embedding-*`(文本) / `qwen*-vl-*`/`multimodal-*`/`tongyi-embedding-vision-*`(多模态) |
 | `GeminiEmbeddingModel` | `str \| DataBlock` | ✅ | 图像/视频/音频/PDF，有每请求元素数限制 |
-| `OllamaEmbeddingModel` | `str` | ❌ | 每次调用新建 client 以避免事件循环绑定问题 |
+| `OllamaEmbeddingModel` | `str` | ❌ | 构造时创建一次 `AsyncClient`（host 取自 credential 或 `OLLAMA_HOST`）；`embedding_cache` 按 host 隔离（v2.0.10+，解析后的 endpoint 计入缓存 key，不同端点同名模型不互相命中） |
 
 > DashScope 多模态可配 `embedding_cache=FileEmbeddingCache()` 启用文件缓存；v2.0.8+ 起
 > 单个向量集文件超过 `max_cache_size` 时直接不入缓存（记 warning），不再因按最旧驱逐而清空整个缓存；
@@ -513,6 +516,9 @@ TTS 的核心 API：
 - `push(text)` — （仅 realtime）追加文本，返回已就绪的增量音频
 - `connect()` / `close()` — （仅 realtime）连接生命周期，也可用 `async with`
 - `realtime: bool` — 是否支持流式输入模式
+
+> v2.0.10+：`TTSModelBase` 是真正的抽象基类（继承 `abc.ABC`），自定义 TTS 模型未实现
+> 抽象方法时会在实例化阶段直接报错，而非留到调用时才失败。
 
 > v2.0.10+：DashScopeTTSModel 合成出错（status_code 非 200）时显式抛 `RuntimeError`，
 > 流式/非流式均不再静默吞错返回空音频。同期起 `synthesize(**kwargs)` 支持调用级参数
