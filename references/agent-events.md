@@ -348,6 +348,9 @@ await agent.reply(UserInterruptEvent(reply_id="原reply_id"))
 >   `CancelledError` 清理路径（`ReActConfig.interruption_raise_cancelled_error=True` 时会在
 >   清理后重新抛出，便于上层捕获）。v2.0.8+：推理/行动迭代中收到 `UserInterruptEvent` 的
 >   清理也统一转入该 `CancelledError` 路径，中断后取消语义正确向外传播。
+>   v2.0.11+：并发执行工具调用期间被取消时，事件队列排空（已产出的事件仍会 yield 给调用方）
+>   后 `CancelledError` 重新向外抛出，不再被 `uncancel()` 吞掉——未到达 toolkit 的被取消
+>   调用不产生 `INTERRUPTED` 工具结果，取消靠异常传播让 reply 循环收尾。
 >
 > 服务化场景下，HTTP 端 `POST /sessions/{sid}/interrupt` 会派发 `UserInterruptEvent`。
 
@@ -529,7 +532,8 @@ await launch_tui(
 ```
 
 - 消息区 + 输入框 + HITL 控件一体：流式渲染回复（文本/思考/工具调用/结果/提示块），
-  工具确认（y/n）、外部工具执行、`AskUser` 多选问答都有对应交互控件；回复进行中可请求
+  工具确认（y/n）、外部工具执行、`AskUser` 多选问答都有对应交互控件（多题表单用
+  `←`/`→` 在已答问题间切换，`→` 为 v2.0.11+ 新增）；回复进行中可请求
   中断（挂起中的 reply 发 `UserInterruptEvent`，运行中的取消任务）。
 - 输入 `/exit` 退出；回复期间输入会排队（每次 `reply_stream` 串行执行，不并发改写同一
   agent 上下文）；目标抛异常时界面通知错误并继续运行。

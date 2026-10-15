@@ -162,6 +162,11 @@ toolkit = Toolkit(tools=[FunctionTool(add_numbers)])
 - 支持同步/异步函数，返回 `ToolChunk`（非流式）或 `AsyncGenerator[ToolChunk]`/`Generator[ToolChunk]`（流式）。
 - 也可以直接返回 `str`、`dict`、列表等普通对象，`FunctionTool` 会自动转换成文本 `ToolChunk`。
 - v2.0.10+ 返回 awaitable 的**同步**函数同样被正确 await（此前仅识别 `async def`）。
+- v2.0.11+ 支持 `functools.partial` 包装的函数：框架解包 partial 链取有效的
+  `__name__` / `__doc__`（在 partial 上显式设置的优先，否则用底层函数的），
+  类型注解逐个解析并按层合并（partial 可覆盖部分参数注解，不受 PEP 563 字符串化注解影响），
+  工具名、描述与 schema 均正常生成（此前 partial 没有 `__name__`、`__doc__` 是
+  `functools.partial` 的通用文档，schema 提取失败）。
 - `FunctionTool(func, name=..., description=..., is_concurrency_safe=True, is_read_only=False, ...)` 可覆盖默认属性。
 - v2.0.7+ 支持传入 `input_schema` 覆盖自动生成的 schema：JSON schema dict 或 pydantic `BaseModel` 子类
   （经 `model_json_schema()` 转换并移除 `title` 字段）；为 `None`（默认）时仍从函数签名/docstring 生成，
@@ -332,6 +337,12 @@ group = ToolGroup(
 
 v2 使用单一 `MCPClient` 类，通过 `is_stateful` 和 `mcp_config` 区分：
 
+> ℹ️ v2.0.11+ 起底层 MCP Python SDK 升级为 2.x（依赖 `mcp>=2.0.0`，HTTP 栈随之引入
+> `httpx2>=2.5.0`）。这是内部适配（SDK 2.x 把 `inputSchema`/`readOnlyHint`/`isError`/
+> `mimeType`/`McpError` 等字段改为 snake_case），`MCPClient` 对外 API 不变；
+> 自定义代码若直接消费 `list_raw_tools()` 返回的 `mcp.types.Tool` 原始对象，需按
+> SDK 2.x 的 snake_case 字段名访问。
+
 ```python
 from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
 
@@ -389,7 +400,7 @@ await client.set_runtime_headers({"authorization": "Bearer <new-token>"})
 
 - 下一次出站请求即生效，无需重连；进行中的调用与已建立的长 GET 流不受影响。
 - MCP 自身按请求设置的 headers（`mcp-session-id`、`content-type` 等）始终优先；
-  httpx 从 URL / body 派生的保留头（`connection` / `content-length` / `host` /
+  httpx2 从 URL / body 派生的保留头（`connection` / `content-length` / `host` /
   `transfer-encoding`）会被直接拒绝（`ValueError`）。
 - 运行时 headers 是实例内存态，不进入 `model_dump` 与 workspace 持久化。
 

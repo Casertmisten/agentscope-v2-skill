@@ -37,7 +37,7 @@ model_cls = credential.get_chat_model_class()
 
 ### 多模态能力方法（v2.0.2+）
 
-Credential 不仅管理对话模型，还统一暴露 Embedding 和 TTS 能力：
+Credential 不仅管理对话模型，还统一暴露 Embedding、TTS 与 ASR（语音转写）能力：
 
 ```python
 credential = DashScopeCredential(api_key="ds-xxx")
@@ -58,9 +58,13 @@ tts_cards = credential.list_tts_models()            # -> list[TTSModelCard]
 # Realtime 实时语音模型（v2.0.10+）
 rt_classes = credential.get_realtime_model_classes()   # -> list[RealtimeModelBase 子类]
 rt_cards = credential.list_realtime_models()           # -> list[RealtimeModelCard]
+
+# ASR 语音转写模型（v2.0.11+）
+asr_classes = credential.get_asr_model_classes()    # -> list[ASRModelBase 子类]
+asr_cards = credential.list_asr_models()            # -> list[ASRModelCard]
 ```
 
-> 各提供商支持的能力不同：DashScope 同时支持对话/Embedding/TTS；OpenAI/Gemini/Ollama 支持 Embedding（`get_embedding_model_class()`）；多数提供商的 TTS 列表为空。
+> 各提供商支持的能力不同：DashScope 同时支持对话/Embedding/TTS；OpenAI/Gemini/Ollama 支持 Embedding（`get_embedding_model_class()`）；OpenAI 另提供 ASR（`get_asr_model_classes()`，v2.0.11+）；多数提供商的 TTS 列表为空。
 
 ### CredentialFactory
 
@@ -531,6 +535,85 @@ TTS 的核心 API：
 > 可能返回空，需调 `synthesize()` 强制输出剩余文本。该模型仍处于开发中，行为细节可能调整。
 
 > 通常无需手动调用 TTS 模型，配合 `TTSMiddleware` 即可把智能体回复自动转语音（见 middleware 文档）。
+
+## ASR 语音转写模型（v2.0.11+）
+
+> ⚠️ 实验性 / 积极开发中：`asr` 模块属于官方 Voice Agent 路线，当前只有 OpenAI 批式实现，
+> API 可能随版本变动。
+
+`agentscope.asr` 提供语音转文字（transcription）的统一接口，与 TTS 镜像对称：
+`ASRModelBase` 同时定义**批式**（一次性转写完整音频）与**实时**（增量推送音频流）两种协议，
+由实现的 `realtime` 属性区分：
+
+```python
+from agentscope.asr import (
+    ASRModelBase,      # 抽象基类（批式 + 实时双协议）
+    ASRModelCard,      # 模型卡（name/label/input_types/realtime/parameter_schema）
+    ASRResponse,       # 转写响应
+    OpenAIASRModel,    # OpenAI Audio Transcriptions API（批式）
+)
+```
+
+### 批式转写（OpenAIASRModel）
+
+```python
+from agentscope.credential import OpenAICredential
+from agentscope.asr import OpenAIASRModel
+
+credential = OpenAICredential(api_key="sk-xxx")
+asr = OpenAIASRModel(
+    credential=credential,
+    model="gpt-4o-mini-transcribe",   # 默认；另带 gpt-4o-transcribe 模型卡
+    parameters=OpenAIASRModel.Parameters(
+        language="zh",     # 可选：ISO-639-1 语言代码
+        prompt=None,       # 可选：转写引导（术语/风格提示）
+    ),
+)
+
+with open("meeting.wav", "rb") as f:
+    audio = f.read()
+
+resp = await asr.transcribe(audio, filename="meeting.wav")
+resp.content        # TextBlock(text=...)；转写文本
+resp.is_last        # 批式结果恒为 True
+```
+
+- `filename` 仅用于 multipart API 识别内存音频的格式（扩展名），默认 `"audio.wav"`。
+- 内置模型卡：`gpt-4o-mini-transcribe` / `gpt-4o-transcribe`，输入
+  flac / mpeg / mp4 / ogg / wav / webm。
+
+### 实时协议（自定义实现）
+
+基类为实时实现预留了流式协议（当前无内置实现）：`async with` 进入时自动 `connect()`、
+退出时 `close()`；每个音频块调 `push(audio)` 返回**已就绪的增量文本**（`ASRResponse`，
+无新文本时 `content=None`）；最后 `transcribe(None)` 收尾（可再带最后一个音频块），
+最终响应 `is_last=True`：
+
+```python
+async with MyRealtimeASR(credential=..., model=...) as asr:
+    for chunk in audio_stream:
+        partial = await asr.push(chunk)    # 增量结果，content 可能为 None
+        ...
+    final = await asr.transcribe()         # audio=None 收尾，is_last=True
+```
+
+### 自定义 ASR 模型
+
+继承 `ASRModelBase` 并实现 `transcribe()`（抽象方法，必须）；实时实现还需覆盖
+`connect()` / `close()` / `push()` 并置 `realtime = True`。`Parameters`（pydantic BaseModel）
+声明 provider 特有参数，`list_models(custom_yaml_dir=None)` 从实现类旁的 `_models/*.yaml`
+加载模型卡（`realtime` 与实现类不一致的卡被过滤，坏卡告警跳过）。
+
+ASR 的核心 API：
+- `transcribe(audio, filename)` — 批式整段转写 / 实时收尾（最终结果 `is_last=True`）
+- `push(audio)` — （仅 realtime）推送音频块，返回已就绪的增量 `ASRResponse`
+- `connect()` / `close()` — （仅 realtime）连接生命周期，也可用 `async with`
+- `realtime: bool` — 是否支持流式输入模式
+
+> 各提供商的 ASR 能力：OpenAI 提供 `OpenAIASRModel`（批式）；其余提供商
+> `get_asr_model_classes()` 当前返回空列表。注意 RealtimeAgent 场景的输入转写
+> （如 DashScope 的 `qwen3-asr-flash-realtime`）走 `agentscope.realtime` 模块的
+> 实时模型，与此批式 `asr` 模块是两条独立路径。
 
 ## 分类器模型 Classifier（v2.0.8+）
 

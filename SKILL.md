@@ -14,7 +14,8 @@ ReMeMiddleware 内嵌 ReMe 长期记忆 / AgenticMemoryMiddleware 文件系统�
 Workspace 工作区（八种 Workspace 均支持内置工具，Backend 抽象：LocalBackend / DockerBackend / E2BBackend /
 K8sBackend / OpenSandboxBackend / DaytonaBackend / AppleContainerBackend / BubblewrapBackend）、Embedding/TTS 多模态模型
 （Embedding v2.0.3 重构为泛型基类，dimensions 必填 + FileEmbeddingCache 文件缓存；TTS 含 OpenAITTSModel /
-DashScope CosyVoice / GeminiTTSModel 等）、RAG 知识库（agentscope.rag：
+DashScope CosyVoice / GeminiTTSModel 等；ASR 语音转写 agentscope.asr：ASRModelBase 批式/实时双协议 +
+OpenAIASRModel gpt-4o-transcribe，v2.0.11+）、RAG 知识库（agentscope.rag：
 KnowledgeBase / QdrantStore / MilvusLiteStore / MongoDBStore / ElasticsearchStore / Parser-Chunker 管线 / RAGMiddleware static+agentic 双模式 + LLM 重排序）、
 SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影 + AgentInvite 邀请已有 agent）、App 服务化（含 KnowledgeBaseManager /
 BlobStore / 内嵌或独立索引 worker / MessageBus 消息总线：
@@ -46,7 +47,7 @@ MiniMaxChatModel 接 Anthropic 兼容端点，M3/M2.7/M2.7-highspeed，v2.0.9+�
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
 
-AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.10`。
+AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.11dev`。
 
 **核心特性**：事件驱动架构、权限系统（含 on_check_permission 中间件 hook、批量确认豁免、
 DEFAULT/DONT_ASK 只读快路径）、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
@@ -308,7 +309,25 @@ OllamaEmbeddingModel 的 embedding_cache 按 host 隔离（解析后的 endpoint
 ChatModelBase 公共流 `aclose()` 等待底层 provider 流清理完成（HTTP 连接等资源真正释放后
 才返回，v2.0.10+）、
 context.jsonl 归档时嵌套媒体一并卸载（`ToolResultBlock.output` 与 `HintBlock.hint` 列表里的
-内联 base64 DataBlock 同样提取到 `data/` 并改写为 `workspace://` URL，JSONL 行宽保持有界，v2.0.10+）。
+内联 base64 DataBlock 同样提取到 `data/` 并改写为 `workspace://` URL，JSONL 行宽保持有界，v2.0.10+）、
+ASR 语音转写模块 `agentscope.asr`（v2.0.11+）：`ASRModelBase` 抽象基类统一批式与实时两种协议——
+批式直接 `transcribe(audio)` 完成整段转写；实时用 `async with` 会话 + `push(audio)` 增量送入 +
+`transcribe(None)` 收尾（最终响应 `is_last=True`），`ASRResponse.content` 为 `TextBlock | None`；
+`ASRModelCard` 模型卡 + `list_models(custom_yaml_dir=None)` 按实现的批式/实时模式过滤；
+首个实现 `OpenAIASRModel` 接 OpenAI Audio Transcriptions API（默认 `gpt-4o-mini-transcribe`，
+另带 `gpt-4o-transcribe` 模型卡，`Parameters` 支持 `language`/`prompt`，输入
+flac/mpeg/mp4/ogg/wav/webm）；Credential 同构新增 `get_asr_model_classes()` / `list_asr_models()`，
+`OpenAICredential` 返回 `[OpenAIASRModel]`、
+MCP Python SDK 升级 2.x（依赖由 `mcp<2.0.0` 改为 `mcp>=2.0.0`，HTTP 栈引入 `httpx2>=2.5.0`；
+内部适配 SDK 2.x 字段 snake_case 化——`inputSchema→input_schema`、`readOnlyHint→read_only_hint`、
+`isError→is_error`、`mimeType→mime_type`、`McpError→MCPError`，对外 API 不变，v2.0.11+）、
+并发工具执行时取消正确传播（caller task 被取消时，并行工具执行路径排空队列中事件后重新抛出
+`CancelledError`，不再 `uncancel()` 吞掉异常——未到达 toolkit 的被取消调用不产生 INTERRUPTED
+工具结果，靠异常传播让 reply 循环收尾，v2.0.11+）、
+`FunctionTool` 支持 `functools.partial` 包装的函数（解包 partial 链取有效 `__name__`/`__doc__`
+（显式设置优先），类型注解逐个解析并按层合并、partial 可覆盖部分注解，schema 与 docstring
+参数描述正常生成，v2.0.11+）、
+TUI ask user 表单右方向键切换到下一题（当前题已作答且非末题时生效，此前仅 ← 回退，v2.0.11+）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
 
@@ -330,8 +349,9 @@ Agent (单一类，reply_stream 返回事件流，reply 返回最终消息)
 
 **一切皆异步** + **事件驱动**：`agent.reply_stream()` 返回 `AsyncGenerator[AgentEvent]`，`agent.reply()` 返回 `Msg`。
 
-**多模态（v2.0.2+）**：独立的 `embedding` / `tts` / `formatter` 模块；Credential 统一暴露
-`get_chat_model_class()` / `get_embedding_model_class()` / `get_tts_model_classes()`；Omni 模型可通过
+**多模态（v2.0.2+）**：独立的 `embedding` / `tts` / `asr` / `formatter` 模块；Credential 统一暴露
+`get_chat_model_class()` / `get_embedding_model_class()` / `get_tts_model_classes()` /
+`get_asr_model_classes()`（ASR 为 v2.0.11+）；Omni 模型可通过
 `DATA_BLOCK_*` 事件流式输出语音，`TTSMiddleware` 可把任意文本回复转语音。
 
 **实时语音（v2.0.8+）**：`agentscope.realtime` 模块（realtime 模型适配器 + 模型卡片 + Transport 传输 + VAD）
@@ -392,7 +412,7 @@ asyncio.run(main())
 | 需要做什么 | 参考文件 |
 |---|---|
 | 配置模型和认证 | [references/models.md](references/models.md) |
-| Embedding / TTS 多模态模型（含 GeminiTTSModel、CosyVoice、OpenAITTSModel） | [references/models.md](references/models.md) |
+| Embedding / TTS / ASR 多模态模型（含 GeminiTTSModel、CosyVoice、OpenAITTSModel、OpenAIASRModel） | [references/models.md](references/models.md) |
 | 分类器模型（JevClassifierModel 概率判定 / ModelRouterMiddleware 模型路由） | [references/models.md](references/models.md) |
 | 创建消息和内容块 | [references/messages.md](references/messages.md) |
 | 注册工具 (ToolBase，含 Windows PowerShell) | [references/tools.md](references/tools.md) |
@@ -445,6 +465,8 @@ credential.list_models()                # 对话模型卡片
 credential.get_embedding_model_class()  # Embedding 模型类（未支持返回 None）
 credential.get_tts_model_classes()      # list[TTS 模型类]（未支持返回空列表）
 credential.list_tts_models()            # list[TTSModelCard]
+credential.get_asr_model_classes()      # list[ASR 模型类]（v2.0.11+，未支持返回空列表）
+credential.list_asr_models()            # list[ASRModelCard]（v2.0.11+）
 ```
 
 详见 [references/models.md](references/models.md)。
