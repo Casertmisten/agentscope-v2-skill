@@ -476,6 +476,7 @@ await launch_console(
 - HITL 确认循环内部由 `launch_console` 驱动：一次 `_run_reply` 若返回 pending 事件，就接着
   `_confirm` 读 stdin，再把 `UserConfirmResultEvent` 回灌进下一轮 `reply_stream`；若确认阶段
   `Ctrl+C`/`Ctrl+D`，则发 `UserInterruptEvent` 中止该 parked reply，让下一次输入干净开始。
+  流本身抛异常时，pending 确认被丢弃并 `renderer.reset()`，下一次输入从干净状态开始（v2.0.11+）。
 
 ### ConsoleRenderer — 被动事件渲染器
 
@@ -488,8 +489,12 @@ renderer = ConsoleRenderer(
     max_tool_result_lines=20,
     console=None,            # rich Console；不传则新建一个输出到 stdout 的
 )
-async for event in agent.reply_stream(user_msg):
-    renderer.render(event)
+try:
+    async for event in agent.reply_stream(user_msg):
+        renderer.render(event)
+except BaseException:
+    renderer.reset()         # 流失败/放弃时清理累积状态
+    raise
 
 msg = renderer.last_msg      # 从事件累积出的回复 Msg（或 None）
 ```
@@ -497,6 +502,10 @@ msg = renderer.last_msg      # 从事件累积出的回复 Msg（或 None）
 行为细节：
 - **文本 / 思考增量**逐 delta 流式打印；**工具调用 / 结果**通过 `Msg.append_event` 缓冲，在各自的
   `*EndEvent` 上整块打印（`max_tool_result_lines` 截断工具结果）。
+- **`reset()`**（v2.0.11+）：清空所有累积消息、结束未闭合的流式行，`last_msg` 归 `None`。流抛异常
+  （没有 `ReplyEndEvent`）或你主动放弃一个流时调用。**HITL 正常暂停时不要调用**——暂停中的回复
+  需要保留，恢复（下一轮 `reply_stream` 回灌确认结果）时接着累积；内部按 `reply_id` 跟踪未完成的
+  回复，多 agent / 成员切换时 pending 回复也不会丢。
 - **未知事件类型被静默跳过**（`debug` 下打印一行 dim 提示），因此后续新增事件类型不会破坏渲染器。
 - `verbosity` 三档：
   - `"quiet"`：仅流式回复文本与错误。

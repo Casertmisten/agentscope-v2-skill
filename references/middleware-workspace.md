@@ -204,6 +204,8 @@ class AuditPermissionMiddleware(MiddlewareBase):
 `TracingMiddleware` 在 `on_reply` / `on_model_call` / `on_acting` 三层创建 OpenTelemetry span：
 reply span 记录 agent/session/reply、HITL/外部执行等待状态和最终回复；model span 记录模型调用请求与响应；
 tool span 记录工具调用与结果。未配置 OpenTelemetry SDK 时会快速透传，开销很低。
+写入 span 的工具结果若为 pydantic 模型（含 `Msg`），自 v2.0.11+ 起用 `model_dump()` 序列化为
+可读 JSON（此前是 Python `repr` 字符串；序列化失败时回退 repr，tracing 永不因此报错）。
 
 ```python
 from opentelemetry.sdk.trace import TracerProvider

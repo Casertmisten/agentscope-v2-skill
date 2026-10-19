@@ -219,6 +219,10 @@ store = MongoDBStore(
 > `filter_fields=["document_id", "tenant_id"]` 后,`KnowledgeBase` 的 `metadata_filter`
 > 和 `search(metadata_filter=...)` 才能按这些字段过滤。这三个 Store 中,只有 `MongoDBStore`
 > 需要预先声明过滤字段。
+>
+> ℹ️ 检索的 `top_k` 上限为 10,000（MongoDB ANN 候选数硬限制,超出抛 `ValueError`）;
+> 内部 `numCandidates` 按 `min(10000, max(100, top_k × 20))` 计算并封顶（v2.0.11+
+> 起不再无上限增长）。
 
 三个 Store 的度量/过滤对比:
 

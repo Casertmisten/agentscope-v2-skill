@@ -327,7 +327,18 @@ MCP Python SDK 升级 2.x（依赖由 `mcp<2.0.0` 改为 `mcp>=2.0.0`，HTTP 栈
 `FunctionTool` 支持 `functools.partial` 包装的函数（解包 partial 链取有效 `__name__`/`__doc__`
 （显式设置优先），类型注解逐个解析并按层合并、partial 可覆盖部分注解，schema 与 docstring
 参数描述正常生成，v2.0.11+）、
-TUI ask user 表单右方向键切换到下一题（当前题已作答且非末题时生效，此前仅 ← 回退，v2.0.11+）。
+TUI ask user 表单右方向键切换到下一题（当前题已作答且非末题时生效，此前仅 ← 回退，v2.0.11+）、
+各 formatter 的 `URLSource` `file://` 本地文件 URL 先按 `url2pathname` 解码百分号编码再打开
+（OpenAI/Anthropic/Gemini/DashScope/Moonshot/xAI/Ollama 全部生效，含中文/空格路径不再报
+找不到文件，v2.0.11+）、
+`ConsoleRenderer` 新增 `reset()`（清空累积消息、结束流式行、`last_msg` 归 None；流失败或放弃时
+调用，HITL 正常暂停不要调；内部按 reply_id 保留暂停中的回复，agent 切换不丢 pending，
+v2.0.11+）、
+TUI 工具确认/表单的已处理记录按 (reply_id, tool_call_id) 二元组区分（不同 reply 中同 id 的
+工具调用不再被误当作已处理跳过，v2.0.11+）、
+MongoDB 检索 `numCandidates` 封顶 10000 且 `top_k > 10000` 显式抛 `ValueError`（v2.0.11+）、
+tracing 中 pydantic 工具结果（含 `Msg`）用 `model_dump()` 序列化为可读 JSON 而非 `repr`
+（失败回退 repr，v2.0.11+）、context.jsonl 归档空批次时不再写入空行（v2.0.11+）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
 
@@ -580,8 +591,12 @@ await launch_console(agent)          # 默认 verbosity="default"
 
 ```python
 renderer = ConsoleRenderer(verbosity="default", max_tool_result_lines=20)
-async for event in agent.reply_stream(user_msg):
-    renderer.render(event)
+try:
+    async for event in agent.reply_stream(user_msg):
+        renderer.render(event)
+except BaseException:
+    renderer.reset()                 # 流失败/放弃时清理（v2.0.11+；HITL 暂停不要调）
+    raise
 print(renderer.last_msg)             # 累积出的 Msg
 ```
 
