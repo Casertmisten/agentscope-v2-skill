@@ -338,7 +338,14 @@ TUI 工具确认/表单的已处理记录按 (reply_id, tool_call_id) 二元组�
 工具调用不再被误当作已处理跳过，v2.0.11+）、
 MongoDB 检索 `numCandidates` 封顶 10000 且 `top_k > 10000` 显式抛 `ValueError`（v2.0.11+）、
 tracing 中 pydantic 工具结果（含 `Msg`）用 `model_dump()` 序列化为可读 JSON 而非 `repr`
-（失败回退 repr，v2.0.11+）、context.jsonl 归档空批次时不再写入空行（v2.0.11+）。
+（失败回退 repr，v2.0.11+）、context.jsonl 归档空批次时不再写入空行（v2.0.11+）、
+DashScope embedding 多模态路径把构造时 `dimensions` 作为 `dimension` 传给 API
+（此前配置值被忽略、实际用服务端默认维度；文本路径一直正常传递，v2.0.11+）、
+Gemini embedding `parameters` 真正生效（`task_type` 等文本参数传给 API，此前被忽略；
+per-call kwargs 优先，v2.0.11+）、
+`OpenAIASRModel.transcribe` 的 per-call kwargs > 构造 `parameters` > 内置默认
+（v2.0.11+ 起可覆盖 `response_format` 等内置默认——此前传入会因关键字重复直接报错；
+非 JSON 响应格式返回纯文本也能解析）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
 

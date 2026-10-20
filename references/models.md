@@ -386,7 +386,7 @@ response = await emb_model(inputs=["hello", "world"])
 |---|---|---|---|
 | `OpenAIEmbeddingModel` | `str` | ❌ | `pass_dimensions=False` 适配不支持该字段的 OpenAI 兼容后端（部分 vLLM/Ollama） |
 | `DashScopeEmbeddingModel` | `str \| DataBlock` | ✅ | 按模型名前缀路由：`text-embedding-*`(文本) / `qwen*-vl-*`/`multimodal-*`/`tongyi-embedding-vision-*`(多模态) |
-| `GeminiEmbeddingModel` | `str \| DataBlock` | ✅ | 图像/视频/音频/PDF，有每请求元素数限制 |
+| `GeminiEmbeddingModel` | `str \| DataBlock` | ✅ | 图像/视频/音频/PDF，有每请求元素数限制；`parameters` 可配 `task_type` 等文本参数（v2.0.11+ 起真正传给 API，此前被忽略；per-call kwargs 优先） |
 | `OllamaEmbeddingModel` | `str` | ❌ | 构造时创建一次 `AsyncClient`（host 取自 credential 或 `OLLAMA_HOST`）；`embedding_cache` 按 host 隔离（v2.0.10+，解析后的 endpoint 计入缓存 key，不同端点同名模型不互相命中） |
 
 > DashScope 多模态可配 `embedding_cache=FileEmbeddingCache()` 启用文件缓存；v2.0.8+ 起
@@ -396,6 +396,8 @@ response = await emb_model(inputs=["hello", "world"])
 > 响应解析已兼容服务端省略 `index`、或在 `embedding` 为空时回退到 `dense_embedding` 的情况。
 > v2.0.8+：是否多模态以公开属性 `supports_multimodal` 暴露（DashScope/Gemini 均支持），
 > 可在运行时据此决定输入走文本还是多模态路径。
+> v2.0.11+：多模态路径同样把构造时的 `dimensions` 作为 `dimension` 传给 API
+> （此前配置值被忽略、实际用服务端默认维度；文本路径一直正常传递）。
 
 > 通过 Credential 获取实现类：`credential.get_embedding_model_class()`（未支持的 provider 返回 `None`）。
 
@@ -579,6 +581,9 @@ resp.is_last        # 批式结果恒为 True
 ```
 
 - `filename` 仅用于 multipart API 识别内存音频的格式（扩展名），默认 `"audio.wav"`。
+- per-call `**kwargs` 与构造 `parameters` 均透传给 Transcriptions API，优先级
+  kwargs > `parameters` > 内置默认（v2.0.11+ 起可覆盖 `response_format` 等
+  内置默认——此前传入会因关键字重复直接报错；非 JSON 响应格式返回纯文本也能解析）。
 - 内置模型卡：`gpt-4o-mini-transcribe` / `gpt-4o-transcribe`，输入
   flac / mpeg / mp4 / ogg / wav / webm。
 
