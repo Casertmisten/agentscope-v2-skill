@@ -345,6 +345,9 @@ from agentscope.embedding import (
 
 `__call__` 自动**分批并发**（按 `batch_size` 切片，`asyncio.gather` 并发，每批独立重试），
 子类只需实现单批 `_call_api`。各 provider 内置可重试异常（`_get_retryable_exceptions`）。
+多批次合并后的 `EmbeddingResponse` 统计语义（v2.0.11+ 修正）：`usage.time` 取**最大批次耗时**
+（批次并发执行，此前取总和会高估墙钟时间）；`source` 仅当**所有**批次都命中缓存时为 `"cache"`，
+否则为 `"api"`（此前多批次合并恒为 `"api"`，即使全部命中缓存）。
 
 ### 构造（标准化参数）
 

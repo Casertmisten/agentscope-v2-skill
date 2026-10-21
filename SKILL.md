@@ -97,7 +97,8 @@ Skill 按 agent 隔离（`skills/.seed` 模板 + 每 agent 一个分区，惰性
 v2.0.8 `agent` 参数接受 `Agent | PipelineProtocol`）、
 Pipeline 流水线（`GoalPipeline` 执行者-校验者目标达成循环：executor 产出执行报告 → verifier 结构化验收
 pass/fail/impossible → fail 带反馈重试至 `max_iters`；支持 HITL 暂停恢复，对外暴露与 Agent 相同的事件流，v2.0.8；
-v2.0.9+ verifier 重试提示以内容块保留多模态目标）、
+v2.0.9+ verifier 重试提示以内容块保留多模态目标；v2.0.11+ `max_retries` 结构化输出重试上限真正生效，
+executor/verifier 各自计数、超限抛 `RuntimeError`、HITL 恢复不重置）、
 `TeamPipeline` 领导者-成员委派团队（v2.0.9+）：leader 经自动注入的外部工具 `TeamAssign(member, prompt)`
 把任务委派给 `TeamMember(agent, description)` 成员——成员在自己上下文里跑，最终回复作为工具结果回给
 leader（只见摘要不见中间步骤）；同轮多成员并发、同成员多委派按序串行；HITL 按 `reply_id` 路由到

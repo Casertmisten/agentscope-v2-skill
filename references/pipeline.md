@@ -59,9 +59,12 @@ await launch_console(pipe)
 - 构造签名还有 `verifier_reset_context=True` / `max_retries=3` 两个参数。`verifier_reset_context`
   已生效（v2.0.8+ 主干）：每轮迭代结束后清空 verifier 的 `context` 与 `summary`（工具缓存、任务状态保留），
   让每轮验收从干净上下文开始，避免上一轮验收历史污染判断；`max_retries` 为 executor/verifier
-  生成合法结构化输出的重试次数（默认 3）。
+  生成合法结构化输出的重试次数（默认 3）。⚠️ `max_retries` 自 v2.0.11+ 起才真正生效——此前参数
+  仅被存储、结构化输出不合法会无限重试；现在 executor 与 verifier **各自独立计数**，超过上限抛
+  `RuntimeError`（如 `The executor failed to generate a valid execution report after 3 retries.`），
+  重试预算与迭代轮数一样记在实例上，HITL 暂停恢复不会重置，新任务（首次输入）才归零。
 - 结构化输出不合法时，pipeline 会以 system-reminder 提示对应 agent 重新调用
-  `GenerateStructuredOutput`。
+  `GenerateStructuredOutput`（计入上述 `max_retries` 预算）。
 - v2.0.9+：verifier 拒绝后的重试提示以内容块形式携带**多模态目标**（goal 含图片等
   DataBlock 时不再被压成纯文本）。
 
