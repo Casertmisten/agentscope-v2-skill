@@ -389,8 +389,8 @@ response = await emb_model(inputs=["hello", "world"])
 |---|---|---|---|
 | `OpenAIEmbeddingModel` | `str` | ❌ | `pass_dimensions=False` 适配不支持该字段的 OpenAI 兼容后端（部分 vLLM/Ollama） |
 | `DashScopeEmbeddingModel` | `str \| DataBlock` | ✅ | 按模型名前缀路由：`text-embedding-*`(文本) / `qwen*-vl-*`/`multimodal-*`/`tongyi-embedding-vision-*`(多模态) |
-| `GeminiEmbeddingModel` | `str \| DataBlock` | ✅ | 图像/视频/音频/PDF，有每请求元素数限制；`parameters` 可配 `task_type` 等文本参数（v2.0.11+ 起真正传给 API，此前被忽略；per-call kwargs 优先） |
-| `OllamaEmbeddingModel` | `str` | ❌ | 构造时创建一次 `AsyncClient`（host 取自 credential 或 `OLLAMA_HOST`）；`embedding_cache` 按 host 隔离（v2.0.10+，解析后的 endpoint 计入缓存 key，不同端点同名模型不互相命中） |
+| `GeminiEmbeddingModel` | `str \| DataBlock` | ✅ | 图像/视频/音频/PDF，有每请求元素数限制；`parameters` 可配 `task_type` 等文本参数（v2.0.11+ 起真正传给 API，此前被忽略；per-call kwargs 优先）；per-call `output_dimensionality` 可覆盖构造时 `dimensions`（v2.0.11+，此前传入会因关键字冲突报错） |
+| `OllamaEmbeddingModel` | `str` | ❌ | 构造时创建一次 `AsyncClient`（host 取自 credential 或 `OLLAMA_HOST`）；`embedding_cache` 按 host 隔离（v2.0.10+，解析后的 endpoint 计入缓存 key，不同端点同名模型不互相命中）；`usage.tokens` 保留服务端 `prompt_eval_count`（v2.0.11+，此前恒为 None） |
 
 > DashScope 多模态可配 `embedding_cache=FileEmbeddingCache()` 启用文件缓存；v2.0.8+ 起
 > 单个向量集文件超过 `max_cache_size` 时直接不入缓存（记 warning），不再因按最旧驱逐而清空整个缓存；
@@ -715,7 +715,8 @@ response.content["urgent"]  # BinaryAnswer 或 RefusalAnswer
 - 需 `openai>=3.26.0`（低版本构造时抛 `ImportError` 指明升级命令）。
 - 问题映射：Binary → `predicate`（criteria 的 true/false 描述拼进 instructions）、
   Choice → `choice`、Score → `score`；`instructions` 缺省用问题名。
-- `**kwargs` 透传 `client.decisions.create`（`safety_identifier` / `extra_headers` 等）。
+- `**kwargs` 透传 `client.decisions.create`（`safety_identifier` / `extra_headers` 等）；
+  v2.0.11+ 起 `model` / `input` 也可经 kwargs 覆盖实例默认值（仅本次调用生效）。
 
 ### 与 ModelRouterMiddleware 配合
 

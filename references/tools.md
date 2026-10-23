@@ -417,6 +417,12 @@ MCPClient(
 )
 ```
 
+### 结构化结果
+
+v2.0.11+ 起 MCP 工具结果中的 `structuredContent` 会被保留：当结果没有文本内容时，
+结构化数据序列化为 JSON 追加为 `TextBlock`（此前被直接丢弃）；已有文本内容则原样保留、
+不附加 JSON。`is_error` 仍映射到 `ToolResultState.ERROR`。
+
 ## 注册到 Toolkit
 
 ```python

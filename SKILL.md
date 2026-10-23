@@ -346,7 +346,24 @@ Gemini embedding `parameters` 真正生效（`task_type` 等文本参数传给 A
 per-call kwargs 优先，v2.0.11+）、
 `OpenAIASRModel.transcribe` 的 per-call kwargs > 构造 `parameters` > 内置默认
 （v2.0.11+ 起可覆盖 `response_format` 等内置默认——此前传入会因关键字重复直接报错；
-非 JSON 响应格式返回纯文本也能解析）。
+非 JSON 响应格式返回纯文本也能解析）、
+KnowledgeBase 删除强制多租户作用域（`delete_document` 在 `metadata_filter` 设定时同时按
+过滤键限定删除范围；底层 `VectorStoreBase.delete` 新增 `metadata_filter` 参数，内置
+Qdrant/MilvusLite/MongoDB/Elasticsearch 均支持，自定义后端带过滤删除时不支持会报错而非
+无作用域删除；`insert_document` 元数据合并改写入 chunk 副本、不再原地修改调用方 chunks，
+集合初始化加 `asyncio.Lock` 串行化，v2.0.11+）、
+MCP 工具结果保留结构化数据（无文本内容时 `structuredContent` 序列化为 JSON 追加为
+TextBlock，此前被直接丢弃，v2.0.11+）、
+Gemini function calling 的 thought signature 跨轮保留（模型返回的工具调用签名编码进
+`gemini_ts:` 前缀的 call id，格式化回历史时还原为 `thought_signature` part，多轮工具
+调用不再丢签名，v2.0.11+）、
+`OpenAIClassifierModel` 的 per-call kwargs 可覆盖 `model`/`input` 实例默认值（仅本次
+调用生效，v2.0.11+）、Gemini embedding per-call `output_dimensionality` 可覆盖构造时
+`dimensions`（此前传入会因关键字冲突报错，v2.0.11+）、Ollama embedding 的
+`usage.tokens` 保留服务端 `prompt_eval_count`（此前恒为 None，v2.0.11+）、
+`WordParser` 文本框文本独立成行且只读一次（不再拼进句子中间、不经 mc:Fallback 重复
+读取）、块级内容控件（`w:sdt`，如自动目录）内的段落/表格不再漏读、空行判定修正（v2.0.11+）、
+`ExcelParser` worksheet 解析失败抛 `ValueError`（此前记 warning 跳过该 sheet，v2.0.11+）。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
 

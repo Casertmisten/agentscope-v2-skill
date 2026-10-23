@@ -64,8 +64,8 @@ uv pip install "agentscope[mem0]"
 | `PDFParser` | `application/pdf` | 每页 1 个 Section（仅文本，不提取图片；pypdf 惰性读取失败同样抛文档化 `ValueError`，v2.0.10+） |
 | `PPTParser` | PPTX | 每张幻灯片 1 个 Section（组合形状内的文本同样读取，v2.0.8+；插入占位符的图片保留其内容，未填充占位符不算图片，v2.0.9+；文本框软换行规范化、延迟 XML 读取错误统一抛文档化 `ValueError`，v2.0.10+） |
 | `ImageParser` | 图像 | 整个文件为 1 个 Section(多模态) |
-| `WordParser`（v2.0.4+） | `.docx` | 按文档顺序,`separate_table=True` 时表格独立成 Section（单元格内嵌套表格的文本同样提取，v2.0.8+；缺路径/无效文档抛文档化错误，v2.0.9+；表格省略的首尾单元格以空串补齐，`w:gridBefore`/`w:gridAfter` 缺省列的网格位置不错位、表格单元格内嵌图片提取，v2.0.10+） |
-| `ExcelParser`（v2.0.4+） | `.xlsx` / `.xls` | `separate_sheet=True` 时每个 sheet 一个 Section(含 `metadata={"sheet": name}`);默认合并为一个 Section。仅图片/仅表头的 sheet 也保留(图片成 DataBlock Section、表头成表格文本,v2.0.8+)；单元格文本保留原样（`"00123"`/`"NA"` 不被 pandas 类型推断与 NA 置换，v2.0.9+）；以 `header=None` 读表,首行按数据保留（重复表头不被 pandas 改名、空表头不变 "Unnamed: ..."，v2.0.10+）；原生错误单元格（`#N/A`/`#REF!` 等）保留原样不被清空（v2.0.10+） |
+| `WordParser`（v2.0.4+） | `.docx` | 按文档顺序,`separate_table=True` 时表格独立成 Section（单元格内嵌套表格的文本同样提取，v2.0.8+；缺路径/无效文档抛文档化错误，v2.0.9+；表格省略的首尾单元格以空串补齐，`w:gridBefore`/`w:gridAfter` 缺省列的网格位置不错位、表格单元格内嵌图片提取，v2.0.10+；文本框文本独立成行且只读一次——不再拼进所在句子中间、也不经 mc:Fallback 重复读取，块级内容控件 `w:sdt`（如自动目录）内的段落/表格不再漏读，空行判定修正——仅含空格/软换行的段落才算空行，v2.0.11+） |
+| `ExcelParser`（v2.0.4+） | `.xlsx` / `.xls` | `separate_sheet=True` 时每个 sheet 一个 Section(含 `metadata={"sheet": name}`);默认合并为一个 Section。仅图片/仅表头的 sheet 也保留(图片成 DataBlock Section、表头成表格文本,v2.0.8+)；单元格文本保留原样（`"00123"`/`"NA"` 不被 pandas 类型推断与 NA 置换，v2.0.9+）；以 `header=None` 读表,首行按数据保留（重复表头不被 pandas 改名、空表头不变 "Unnamed: ..."，v2.0.10+）；原生错误单元格（`#N/A`/`#REF!` 等）保留原样不被清空（v2.0.10+）；worksheet 解析失败抛 `ValueError`（此前记 warning 跳过该 sheet，v2.0.11+） |
 
 Word/Excel Parser 针对表格场景增加配置:
 
@@ -281,7 +281,7 @@ kb = KnowledgeBase(
 |---|---|
 | `search(queries, top_k=5, score_threshold=None)` | 批量 embed 查询 → 并发检索 → 去重(按 `document_id, chunk_index`)→ 按 score 降序截 top_k |
 | `insert_document(chunks, document_id=None, document_metadata=None)` | 批量 embed 并插入为同一文档,返回 `document_id` |
-| `delete_document(document_id)` | 按文档 id 删除其全部记录 |
+| `delete_document(document_id)` | 按文档 id 删除其全部记录（`metadata_filter` 设定时同时按过滤键限定作用域，v2.0.11+） |
 | `list_documents()` | 列出当前知识库内所有文档摘要（返回 `list[DocumentSummary]`） |
 | `list_chunks(document_id, offset=0, limit=30)` | v2.0.7+：按 `chunk_index` 升序列出单个文档的 chunk（分页），受 `metadata_filter` 约束 |
 
@@ -290,8 +290,9 @@ kb = KnowledgeBase(
 
 关键点:
 - **索引与检索必须用同一个 embedding 模型**,否则向量不可比。
-- `insert_document` 时 chunk 元数据合并优先级(高者覆盖低者):`metadata_filter` 键(安全边界) > chunk 自身 metadata(解析器写入) > `document_metadata`(文档级,如 filename)。
-- `metadata_filter`(多租户隔离):检索/列出**强制**按该过滤;插入**强制**写入这些键——防止解析器 bug 或恶意内容把记录塞进别的租户作用域。`None`(默认)表示该知识库独占 collection。
+- `insert_document` 时 chunk 元数据合并优先级(高者覆盖低者):`metadata_filter` 键(安全边界) > chunk 自身 metadata(解析器写入) > `document_metadata`(文档级,如 filename)。合并写入 chunk 的**副本**,调用方传入的 chunks 不被原地修改（v2.0.11+）。
+- `metadata_filter`(多租户隔离):检索/列出/删除**强制**按该过滤;插入**强制**写入这些键——防止解析器 bug 或恶意内容把记录塞进别的租户作用域。`None`(默认)表示该知识库独占 collection。
+- v2.0.11+ 起删除同样受作用域保护:底层 `VectorStoreBase.delete` 新增 `metadata_filter` 参数,内置 Qdrant/MilvusLite/MongoDB/Elasticsearch 后端均已实现;自定义后端需适配新签名,带过滤删除时不支持会报错而**不会**回退到无作用域删除。
 - 检索返回的 `VectorSearchResult`:`score`(相关性,统一 **higher-is-better**——距离度量的后端如 L2 返回取负后的距离,v2.0.8)+ `document_id` + `chunk`。分数仅在同一 store 的同一度量内可比。
 - `list_chunks` 底层对应 `VectorStoreBase.list_chunks`——特意**非抽象方法**(避免破坏既有第三方子类),未实现的后端抛 `NotImplementedError`;内置 Qdrant/MilvusLite/MongoDB/Elasticsearch 四个后端均已支持。
 
