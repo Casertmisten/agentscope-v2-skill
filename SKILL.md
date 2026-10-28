@@ -362,8 +362,25 @@ Gemini function calling 的 thought signature 跨轮保留（模型返回的工�
 `dimensions`（此前传入会因关键字冲突报错，v2.0.11+）、Ollama embedding 的
 `usage.tokens` 保留服务端 `prompt_eval_count`（此前恒为 None，v2.0.11+）、
 `WordParser` 文本框文本独立成行且只读一次（不再拼进句子中间、不经 mc:Fallback 重复
-读取）、块级内容控件（`w:sdt`，如自动目录）内的段落/表格不再漏读、空行判定修正（v2.0.11+）、
-`ExcelParser` worksheet 解析失败抛 `ValueError`（此前记 warning 跳过该 sheet，v2.0.11+）。
+读取）、块级内容控（`w:sdt`，如自动目录）内的段落/表格不再漏读、空行判定修正（v2.0.11+）、
+`ExcelParser` worksheet 解析失败抛 `ValueError`（此前记 warning 跳过该 sheet，v2.0.11+）、
+Credential 新增 `get_chat_model_classes()`——暴露 credential 支持的全部对话模型类，
+`OpenAICredential` 同时返回 `[OpenAIChatModel, OpenAIResponseModel]`（Chat Completions 与
+Responses API 双面），`list_models()` 改为合并所有类的模型卡、`ModelCard` 新增 `model_class`
+字段标识卡片所属模型类，服务化 chat run 配置支持显式 `model_class` 选择 API 面（v2.0.12+）、
+MCP 工具进度流（`MCPClient`/`MCPTool` 构造参数 `stream_progress=True` 时 `call()` 返回异步生成器：
+进度 chunk 的 `metadata["mcp_progress"]` 带 `progress`/`total`/`message`，最终结果最后产出；
+尽力而为快照——最多缓存 1024 个进度更新、溢出丢最旧，最终结果不丢；sandbox gateway 代理的工具
+只返回最终结果；经 Agent 执行时进度以 `CustomEvent(name="mcp_progress")` 进入工具执行事件流、
+不写入消息内容；同时 MCPClient/MCPTool
+内部全面改用 SDK 2.x 高层 `mcp.Client`，直接构造 `MCPTool` 时 `session` 参数类型变为
+`mcp.Client`、`client_gen` 应产出已连接的 `mcp.Client`（旧式 transport 元组带
+`DeprecationWarning` 兼容），v2.0.12+）、
+`JevClassifierModel` 调用级 `model=` 覆盖真正到达 Jev system_one 调用（仅本次生效不记忆，
+v2.0.12+）、七个模型适配器（Anthropic/DashScope/DeepSeek/Moonshot/OpenAI Chat/OpenAI
+Responses/Volcengine）把 API 返回的可空 usage 计数器归一为 0（此前 `null` 会传进
+`Usage` 累计，v2.0.12+）、`RealtimeModelCard` 新增 `release_date` 字段（v2.0.12+）。
+AgentScope 2.0.11 已正式发布，main 进入 2.0.12dev。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
 

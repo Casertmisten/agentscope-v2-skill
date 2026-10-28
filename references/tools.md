@@ -342,6 +342,12 @@ v2 使用单一 `MCPClient` 类，通过 `is_stateful` 和 `mcp_config` 区分�
 > `mimeType`/`McpError` 等字段改为 snake_case），`MCPClient` 对外 API 不变；
 > 自定义代码若直接消费 `list_raw_tools()` 返回的 `mcp.types.Tool` 原始对象，需按
 > SDK 2.x 的 snake_case 字段名访问。
+>
+> v2.0.12+ 起内部全面改用 SDK 2.x 高层 `mcp.Client`（不再手工管理
+> `ClientSession` 生命周期）。直接构造 `MCPTool` 时：`session` 参数类型为
+> `mcp.Client`（此前 `mcp.ClientSession`）；`client_gen` 的上下文管理器应产出
+> **已连接的** `mcp.Client`，旧式 `(read_stream, write_stream)` transport 元组仍被
+> 接受但触发 `DeprecationWarning`（仅使用其读写流）。
 
 ```python
 from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
@@ -422,6 +428,37 @@ MCPClient(
 v2.0.11+ 起 MCP 工具结果中的 `structuredContent` 会被保留：当结果没有文本内容时，
 结构化数据序列化为 JSON 追加为 `TextBlock`（此前被直接丢弃）；已有文本内容则原样保留、
 不附加 JSON。`is_error` 仍映射到 `ToolResultState.ERROR`。
+
+### 工具进度流（v2.0.12+）
+
+主要入口是 `MCPClient` 构造参数 `stream_progress=True`——`get_tool()` 返回的所有
+`MCPTool` 均继承该设置（`MCPTool` 也可单独构造时指定）。开启后 `call()` 返回异步
+生成器而非单个结果：先产出进度 chunk（`chunk.metadata["mcp_progress"]` 含
+`progress` / `total` / `message`），最后产出转换后的最终工具结果：
+
+```python
+client = MCPClient(
+    name="weather",
+    is_stateful=False,
+    mcp_config=HttpMCPConfig(url="..."),
+    stream_progress=True,          # 该 client 的所有工具都流式返回进度
+)
+tool = await client.get_tool("long_running_task")
+
+async for chunk in await tool.call(query="..."):
+    if "mcp_progress" in chunk.metadata:
+        p = chunk.metadata["mcp_progress"]     # {"progress": 42.0, "total": 100.0, "message": ...}
+    else:
+        result = chunk                         # 最终结果
+```
+
+- 进度是**尽力而为的快照**而非无损事件日志：最多保留 1024 个待处理进度更新，
+  溢出丢弃最旧者（不报告丢弃数）；最终结果独立发送、绝不被挤掉。
+- 仅当服务端为该调用实际发送 MCP 进度通知时才产生进度 chunk。
+- 经 sandbox gateway 代理的 MCP 工具只返回最终结果，无进度流。
+- 经 Agent 执行时，进度以 `CustomEvent(name="mcp_progress")` 出现在工具执行事件流中
+  （`value` 含 `reply_id` / `tool_call_id` / `progress` / `total` / `message`），
+  不属于最终工具结果、不写入消息内容。
 
 ## 注册到 Toolkit
 

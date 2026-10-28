@@ -46,6 +46,11 @@ credential = DashScopeCredential(api_key="ds-xxx")
 chat_cls = credential.get_chat_model_class()        # -> DashScopeChatModel
 chat_models = credential.list_models()              # 对话模型卡片
 
+# 全部对话模型类（v2.0.12+，一个 credential 可能暴露多个 API 面）
+chat_classes = credential.get_chat_model_classes()  # -> list[ChatModelBase 子类]
+# OpenAICredential -> [OpenAIChatModel, OpenAIResponseModel]
+# （Chat Completions 与 Responses API 两个类）；其余 credential 默认返回单元素列表
+
 # Embedding 模型（v2.0.2+）
 emb_cls = credential.get_embedding_model_class()    # -> DashScopeEmbeddingModel | None
 # 注意：返回单个类或 None，未支持的提供商返回 None
@@ -65,6 +70,10 @@ asr_cards = credential.list_asr_models()            # -> list[ASRModelCard]
 ```
 
 > 各提供商支持的能力不同：DashScope 同时支持对话/Embedding/TTS；OpenAI/Gemini/Ollama 支持 Embedding（`get_embedding_model_class()`）；OpenAI 另提供 ASR（`get_asr_model_classes()`，v2.0.11+）；多数提供商的 TTS 列表为空。
+>
+> v2.0.12+ 起 `list_models()` 合并 `get_chat_model_classes()` 返回的**所有**类的模型卡，
+> 每张 `ModelCard` 新增 `model_class` 字段标识所属模型类（如 `openai_chat` / `openai_response`），
+> 据此可区分同名模型走哪个 API（OpenAI 的 Responses 卡 label 带 "Responses API" 后缀）。
 
 ### CredentialFactory
 
@@ -686,6 +695,8 @@ response.usage               # ClassifierUsage: time/input_tokens/output_tokens
 - 问题都可选 `instructions`（要判定什么）；`BinaryQuestion.criteria` 用
   `BinaryCriteria(true=..., false=...)` 描述两个结果的含义，`ChoiceQuestion.criteria`
   是 `{选项名: 描述}`，`ScoreQuestion.criteria` 是从 0 分起的有序描述列表。
+- 调用级 `model=` 可覆盖 `JevClassifierModel` 的实例默认模型（v2.0.12+ 真正到达
+  Jev system_one 调用，仅本次调用生效、不会被记忆到后续调用）。
 - `ClassifierResponse.model` 返回实际使用的模型名，`metadata` 携带 provider 无关的附加信息。
 - `TypeSafeCredential`（api_key + 可选 base_url）**只服务分类器**，
   `get_chat_model_class()` 会抛 `NotImplementedError`。

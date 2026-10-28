@@ -177,7 +177,7 @@ context_config = ContextConfig(
 | `UserConfirmResultEvent` | 用户确认结果（用于继续回复） |
 | `ExternalExecutionResultEvent` | 外部执行结果（用于继续回复） |
 | `UserInterruptEvent` | 用户中断（用于中止一个 parked reply，v2.0.4+） |
-| `CustomEvent` | 服务层自定义事件（type=`"CUSTOM"`，含 name/value，用于中间件通知前端状态/团队成员/权限变更等） |
+| `CustomEvent` | 服务层自定义事件（type=`"CUSTOM"`，含 name/value，用于中间件通知前端状态/团队成员/权限变更等；v2.0.12+ 含 MCP 工具进度 `name="mcp_progress"`，value 带 `reply_id`/`tool_call_id`/`progress`/`total`/`message`，`Msg.apply_event` 跳过 CUSTOM 事件不改消息内容） |
 
 ### 所有事件的公共字段
 

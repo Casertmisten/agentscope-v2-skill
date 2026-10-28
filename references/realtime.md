@@ -147,7 +147,8 @@ YAML 模型卡片（`realtime/_<provider>/_models/*.yaml`，可用 `custom_yaml_
 关键字段：`name` / `label` / `status`、`input_types` / `output_types`、
 `input_sample_rate` / `output_sample_rate`、`supports_tools`、
 `max_context_tokens` / `max_audio_turns` / `max_audio_duration_s` /
-`max_session_duration_s`、`parameter_schema`（可调参数的 JSON Schema，供 UI 展示）。
+`max_session_duration_s`、`parameter_schema`（可调参数的 JSON Schema，供 UI 展示）、
+`release_date`（模型发布日期，v2.0.12+）。
 
 ### 自定义 realtime 模型
 
