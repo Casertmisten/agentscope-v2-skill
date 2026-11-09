@@ -9,13 +9,15 @@ description: |
 AskUser 多选提问外部工具）、
 MCPClient 集成、AgentState 状态管理、Event 事件系统、Permission 权限、ToolGroup、Skill 技能系统、
 Middleware 中间件（含 TTSMiddleware / ReplyBudgetControlMiddleware / TracingMiddleware / Mem0Middleware 跨会话长期记忆 /
-ReMeMiddleware 内嵌 ReMe 长期记忆 / AgenticMemoryMiddleware 文件系统长期记忆 / RAGMiddleware 检索增强，及 on_check_permission
+ReMeMiddleware 内嵌 ReMe 长期记忆 / AgenticMemoryMiddleware 文件系统长期记忆 / RAGMiddleware 检索增强 /
+SteeringMiddleware 运行中追加输入引导 reply，及 on_check_permission
 权限检查洋葱 hook、on_reply 吞 ReplyEndEvent 续跑回复循环）、Agent 结构化输出（structured_schema Pydantic 模型）、运行时状态注入（时间/任务/上下文压缩感知/重复工具错误提醒/agent 自主压缩工具）、
 Workspace 工作区（八种 Workspace 均支持内置工具，Backend 抽象：LocalBackend / DockerBackend / E2BBackend /
 K8sBackend / OpenSandboxBackend / DaytonaBackend / AppleContainerBackend / BubblewrapBackend）、Embedding/TTS 多模态模型
 （Embedding v2.0.3 重构为泛型基类，dimensions 必填 + FileEmbeddingCache 文件缓存；TTS 含 OpenAITTSModel /
-DashScope CosyVoice / GeminiTTSModel 等；ASR 语音转写 agentscope.asr：ASRModelBase 批式/实时双协议 +
-OpenAIASRModel gpt-4o-transcribe，v2.0.11+）、RAG 知识库（agentscope.rag：
+DashScope CosyVoice / GeminiTTSModel 等 + VoiceCloningClient 语音复刻（v2.0.12+）；ASR 语音转写 agentscope.asr：ASRModelBase 批式/实时双协议 +
+OpenAIASRModel gpt-4o-transcribe，v2.0.11+；DashScopeASRModel / DashScopeRealtimeASRModel，v2.0.12+）、
+thinking_enable 三态思考开关（None 不发送交给 provider 默认，v2.0.12+）、RAG 知识库（agentscope.rag：
 KnowledgeBase / QdrantStore / MilvusLiteStore / MongoDBStore / ElasticsearchStore / Parser-Chunker 管线 / RAGMiddleware static+agentic 双模式 + LLM 重排序）、
 SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影 + AgentInvite 邀请已有 agent）、App 服务化（含 KnowledgeBaseManager /
 BlobStore / 内嵌或独立索引 worker / MessageBus 消息总线：
@@ -23,7 +25,8 @@ RedisMessageBus / InMemoryMessageBus / Session Status 端点（含 list_sessions
 AsyncSQLAlchemyStorage 持久化 / /health 健康检查端点 / workspace 文件读取与状态端点（WorkspaceService +
 DirectoryListing + WorkspaceStatus/GitStatus + session cwd 工作目录）/ extra_agent_middlewares 工厂 workspace 参数 /
 Anthropic thinking_mode 推理控制 / Channel IM 频道接入钉钉、飞书与 Discord / Skill 按 agent 分区隔离 / 服务化实时语音
-/realtime 端点：浏览器 WebRTC offer/answer 接 RealtimeAgent（v2.0.10+））、Agent 中断（UserInterruptEvent）、
+/realtime 端点：浏览器 WebRTC offer/answer 接 RealtimeAgent（v2.0.10+）/ 可编辑服务端聊天输入队列 + steering 改投 /
+/asr 浏览器语音输入 / /voice-profile 音色档案（v2.0.12+））、Agent 中断（UserInterruptEvent）、
 回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR）、跨用户资源共享（ResourceAccessPolicy 抽象）、
 Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 workspace）、
 终端控制台 console（launch_console 交互式终端对话调试 / ConsoleRenderer 事件流渲染，内置 HITL 工具确认与 Ctrl+C 中断，agent 与 pipeline 均可传入）、
@@ -47,7 +50,7 @@ MiniMaxChatModel 接 Anthropic 兼容端点，M3/M2.7/M2.7-highspeed，v2.0.9+�
 
 # AgentScope 2.0 开发指南 (agentscope-ai)
 
-AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.11dev`。
+AgentScope 2.0 是完全重构的版本，API 与 1.x (modelscope/agentscope) 不兼容。当前文档对应本地源码 `2.0.12dev`。
 
 **核心特性**：事件驱动架构、权限系统（含 on_check_permission 中间件 hook、批量确认豁免、
 DEFAULT/DONT_ASK 只读快路径）、上下文自动压缩、工具组管理、Skill 技能系统、MCP 统一客户端、
@@ -98,7 +101,8 @@ v2.0.8 `agent` 参数接受 `Agent | PipelineProtocol`）、
 Pipeline 流水线（`GoalPipeline` 执行者-校验者目标达成循环：executor 产出执行报告 → verifier 结构化验收
 pass/fail/impossible → fail 带反馈重试至 `max_iters`；支持 HITL 暂停恢复，对外暴露与 Agent 相同的事件流，v2.0.8；
 v2.0.9+ verifier 重试提示以内容块保留多模态目标；v2.0.11+ `max_retries` 结构化输出重试上限真正生效，
-executor/verifier 各自计数、超限抛 `RuntimeError`、HITL 恢复不重置）、
+executor/verifier 各自计数、超限抛 `RuntimeError`、HITL 恢复不重置；v2.0.12+ 预算按单次产出计——
+每产出一份合法报告/裁决即归零，不再跨多轮迭代累计）、
 `TeamPipeline` 领导者-成员委派团队（v2.0.9+）：leader 经自动注入的外部工具 `TeamAssign(member, prompt)`
 把任务委派给 `TeamMember(agent, description)` 成员——成员在自己上下文里跑，最终回复作为工具结果回给
 leader（只见摘要不见中间步骤）；同轮多成员并发、同成员多委派按序串行；HITL 按 `reply_id` 路由到
@@ -275,7 +279,8 @@ RealtimeAgent 传输层 Frame 化（`TransportBase.incoming()` 产出 `Transport
 模式正确处理；危险路径检查前先解析符号链接、本地 unlink 符号链接不跟随目标（v2.0.10+）、
 `ReplyBudgetControlMiddleware` 预算耗尽时若结构化输出尚未完成，注入专用提示且 tool_choice
 只开放结构化输出工具（不再一刀切禁工具把结构化输出卡死，v2.0.10+）、
-DeepSeek/Moonshot 设置 thinking.type 默认值前拷贝 extra_body（调用方传入的 dict 不被突变，v2.0.10+）、
+DeepSeek/Moonshot 设置 thinking.type 默认值前拷贝 extra_body（调用方传入的 dict 不被突变，v2.0.10+；
+v2.0.12+ 起仅在显式设置 `thinking_enable` 时写入）、
 OpenAI Chat 非流式音频输出包真实 WAV 头（RIFF/data chunk 尺寸准确，可落盘直接播放，v2.0.10+）、
 流式音频累加的最终块把占位 WAV 头（0xFFFFFFFF）重写为真实 chunk 尺寸（流式与非流式
 落盘均为合法 WAV；非规范 44 字节布局原样保留，v2.0.10+）、
@@ -362,7 +367,7 @@ Gemini function calling 的 thought signature 跨轮保留（模型返回的工�
 `dimensions`（此前传入会因关键字冲突报错，v2.0.11+）、Ollama embedding 的
 `usage.tokens` 保留服务端 `prompt_eval_count`（此前恒为 None，v2.0.11+）、
 `WordParser` 文本框文本独立成行且只读一次（不再拼进句子中间、不经 mc:Fallback 重复
-读取）、块级内容控（`w:sdt`，如自动目录）内的段落/表格不再漏读、空行判定修正（v2.0.11+）、
+读取）、块级内容控件（`w:sdt`，如自动目录）内的段落/表格不再漏读、空行判定修正（v2.0.11+）、
 `ExcelParser` worksheet 解析失败抛 `ValueError`（此前记 warning 跳过该 sheet，v2.0.11+）、
 Credential 新增 `get_chat_model_classes()`——暴露 credential 支持的全部对话模型类，
 `OpenAICredential` 同时返回 `[OpenAIChatModel, OpenAIResponseModel]`（Chat Completions 与
@@ -379,7 +384,57 @@ MCP 工具进度流（`MCPClient`/`MCPTool` 构造参数 `stream_progress=True` 
 `JevClassifierModel` 调用级 `model=` 覆盖真正到达 Jev system_one 调用（仅本次生效不记忆，
 v2.0.12+）、七个模型适配器（Anthropic/DashScope/DeepSeek/Moonshot/OpenAI Chat/OpenAI
 Responses/Volcengine）把 API 返回的可空 usage 计数器归一为 0（此前 `null` 会传进
-`Usage` 累计，v2.0.12+）、`RealtimeModelCard` 新增 `release_date` 字段（v2.0.12+）。
+`Usage` 累计，v2.0.12+）、`RealtimeModelCard` 新增 `release_date` 字段（v2.0.12+）、
+Steering 运行中引导（v2.0.12+）：`SteeringMiddleware(source)` + 进程内 `SteeringQueue`，在
+`ReplyStartEvent` 之后 `queue.submit(msgs, session_id=, reply_id=)` 追加输入，下一个推理边界以
+`HintBlock` 注入、不打断模型/工具调用（纯文本终稿后到达的输入会压下终稿再迭代一轮），
+`SteeringReceipt.wait()` 返回 `injected`/`unconsumed`/`failed`；服务化可编辑聊天输入队列（v2.0.12+）：
+`POST /chat/` 普通输入改为入队返回 `status="queued"` + `queue_item_id`、session 空闲时 FIFO 出队，
+`/chat/queue*` 端点列出/编辑/删除/重排，`POST /chat/queue/{id}/steer` 把排队项改投运行中的 reply
+（每 session 100 / 每用户 500 上限；自定义 `MessageBus` 需覆盖带默认实现的 `queue_read`/`queue_replace`）、
+`thinking_enable` 三态（v2.0.12+）：全部 11 个 chat 适配器统一 `bool | None = None`，`None` 不发送
+思考参数交给 provider 默认——DeepSeek/DashScope/Ollama/Moonshot（非 K3）/Gemini 此前默认**强制关闭**
+思考，要保持旧行为须显式 `False`；Anthropic/MiniMax 的 `False` 改发 `disabled`；OpenAI/xAI 的
+`reasoning_effort` 单独设置即生效，OpenAI `False` 发 `"none"`、xAI `False` 抛 `ValueError`、
+Anthropic `enabled` 模式 budget 按有效 max_tokens（extra_body > 调用级 > Parameters > 8192）推导
+`max(1024, max_tokens // 2)`、显式上限不再被改写，`input_tokens` 计入缓存读写（与其他 provider
+口径一致，v2.0.12+）、Kimi K3.1 Pro / Pro Highspeed 模型卡（K3 系列始终思考、剥离 temperature/top_p
+等）、`claude-sonnet-4-5` 标 deprecated、`TypeSafeCredential` 注册进 `CredentialFactory`、Ollama
+结构化输出降级参与 no_think（v2.0.12+）、
+`DataBlock` 支持 provider 专属媒体参数（`extra="allow"`，如 `detail`/`fps`/`cache_control`/
+`video_metadata`，各 formatter 按 API 嵌套规则放置）、多智能体格式化器保留 HintBlock（此前被丢弃，
+运行时注入的提示可能到不了模型）、Volcengine 音频输入（mp3/wav/aac/m4a）、OpenAI Chat 消息 `name`
+自动规范化（v2.0.12+）、`Msg.get_text_content()` 恒返回 `str`（无文本块时为 `""`，此前为 `None`——
+`is None` 判断需改，v2.0.12+）、`ToolResponse.append_chunk` 只按 id 续接 Base64 DataBlock（URL 块与文本
+按到达顺序追加，v2.0.12+）、
+语音复刻（v2.0.12+）：`VoiceCloningClientBase` + `OpenAIVoiceCloningClient` / `DashScopeVoiceCloningClient`
+（`credential.get_voice_cloning_client_class()`，`TTSModelCard.voice_cloning` 标记支持的模型，OpenAI
+克隆音色传 `voice={"id": voice_id}`）、`TTSMiddleware(continue_on_error=True)` 容错（停用语音继续
+文本并发 `tts_error` 事件）、服务化 `/voice-profile` 音色档案（⚠️ `StorageBase` 新增 4 个 voice profile
+**抽象方法**，自定义 Storage 必须实现）、`DashScopeCredential.websocket_url` 与 DashScope TTS 端点路由
+（依赖 `dashscope>=1.20.0`）、CosyVoice 冷启动后的 push 失败显式抛出、Gemini TTS 只取首个音频候选、
+DashScope ASR（`DashScopeASRModel` 批式 / `DashScopeRealtimeASRModel` 实时，`push` 返回累计全文）+
+`ASRModelCard.parameters_overrides` + 服务化 `/asr` 浏览器语音输入（批式上传 / 实时 WebSocket +
+60s token）与 `SessionConfig.asr_model_config`（v2.0.12+）、
+权限规则按子命令匹配（v2.0.12+）：deny/ask 规则任一子命令命中即生效、allow 规则须覆盖每个子命令
+（新增 `ToolBase.get_permission_inputs`），`ACCEPT_EDITS`/`DONT_ASK` 的文件系统命令自动放行要求每个
+子命令都是文件系统命令（`touch a && curl ... | sh` 不再搭便车放行）、内置 Read 运行时校验
+offset/limit、非 UTF-8 文件 Read 以 U+FFFD 显示且 Edit 拒绝修改（不再有损重写）、Write 失败返回
+ERROR 结果、PowerShell 探针须 exit 0（v2.0.12+）、workspace 安装 skill 校验 SKILL.md front matter
+（`name`/`description` 必填否则 `ValueError`）且全路径 `utf-8-sig`，删除按服务器本地路径安装的
+`POST /workspace/skill`（v2.0.12+）、
+GoalPipeline `max_retries` 按单次产出归零、TeamPipeline 成员失败时先中断 leader 挂起的委派、HITL
+恢复完成的轮次计入 `max_iters`、`ReplyBudgetControlMiddleware` 上一 reply 的预算 hint 在新 reply
+开始时移除、废弃的 `InjectionConfig.context_buffer_ratio` 覆盖作用于深拷贝（v2.0.12+）、
+`create_app(tool_offload_timeout_secs=10.0)` 慢工具转后台的等待上限（`None` 关闭）、`POST/PATCH /agents`
+写入时校验 context 比例（422）、定时任务 `started_at`/`ended_at` 真正生效（须带 UTC 偏移）且 cron
+日/周两字段都受限时按标准取并集（v2.0.12+）、
+Embedding 调用级参数优先级对齐（OpenAI per-call `dimensions`、DashScope 文本 `parameters` 与 per-call
+`api_key` 生效）、DashScope 响应按 index 还原输入顺序、Gemini 多模态读写 `embedding_cache`、DashScope
+多模态缓存 key 深拷贝（此前永不命中）、`FileEmbeddingCache` 负值抛 `ValueError`、`MilvusLiteStore`
+`batch_size <= 0` 抛 `ValueError`、MongoDB 列举接口 `metadata_filter` 按 `$eq` 字面匹配、`WordParser`
+保留段内 tab/软换行并跳过 `w:del` 删除修订、文本框内多段落各自换行、AgenticMemory 长 frontmatter
+读到闭合 `---` 完整解析、RealtimeAgent 流结束时清理未绑定的本地用户话轮（v2.0.12+）。
 AgentScope 2.0.11 已正式发布，main 进入 2.0.12dev。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
@@ -404,7 +459,8 @@ Agent (单一类，reply_stream 返回事件流，reply 返回最终消息)
 
 **多模态（v2.0.2+）**：独立的 `embedding` / `tts` / `asr` / `formatter` 模块；Credential 统一暴露
 `get_chat_model_class()` / `get_embedding_model_class()` / `get_tts_model_classes()` /
-`get_asr_model_classes()`（ASR 为 v2.0.11+）；Omni 模型可通过
+`get_asr_model_classes()`（ASR 为 v2.0.11+，v2.0.12+ DashScope 也提供）/
+`get_voice_cloning_client_class()`（语音复刻，v2.0.12+）；Omni 模型可通过
 `DATA_BLOCK_*` 事件流式输出语音，`TTSMiddleware` 可把任意文本回复转语音。
 
 **实时语音（v2.0.8+）**：`agentscope.realtime` 模块（realtime 模型适配器 + 模型卡片 + Transport 传输 + VAD）
@@ -465,7 +521,7 @@ asyncio.run(main())
 | 需要做什么 | 参考文件 |
 |---|---|
 | 配置模型和认证 | [references/models.md](references/models.md) |
-| Embedding / TTS / ASR 多模态模型（含 GeminiTTSModel、CosyVoice、OpenAITTSModel、OpenAIASRModel） | [references/models.md](references/models.md) |
+| Embedding / TTS / ASR 多模态模型（含 GeminiTTSModel、CosyVoice、OpenAITTSModel、语音复刻 VoiceCloningClient、OpenAIASRModel、DashScope ASR） | [references/models.md](references/models.md) |
 | 分类器模型（JevClassifierModel 概率判定 / ModelRouterMiddleware 模型路由） | [references/models.md](references/models.md) |
 | 创建消息和内容块 | [references/messages.md](references/messages.md) |
 | 注册工具 (ToolBase，含 Windows PowerShell) | [references/tools.md](references/tools.md) |
@@ -480,7 +536,7 @@ asyncio.run(main())
 | 终端 UI（launch_tui 全屏聊天 / ChatUI / MessagesUI 组件） | [references/agent-events.md](references/agent-events.md) |
 | 权限和工具组（含 on_check_permission hook） | [references/permissions.md](references/permissions.md) |
 | RAG 知识库（KnowledgeBase / ElasticsearchStore / RAGMiddleware） | [references/rag.md](references/rag.md) |
-| 中间件（含 TTS / Tracing / Mem0 / ReMe / AgenticMemory / on_check_permission）和工作区 | [references/middleware-workspace.md](references/middleware-workspace.md) |
+| 中间件（含 TTS / Tracing / Mem0 / ReMe / AgenticMemory / Steering 运行中引导 / on_check_permission）和工作区 | [references/middleware-workspace.md](references/middleware-workspace.md) |
 | 服务化、RAG 服务层与子智能体模板 (SubAgentTemplate) | [references/middleware-workspace.md](references/middleware-workspace.md) |
 | Workspace 全部后端（含 AppleContainer / Bubblewrap）+ 跨用户资源共享 | [references/middleware-workspace.md](references/middleware-workspace.md) |
 | Hub 注册中心（GitHubMCPHub / ClawSkillHub，浏览-安装-拉入 MCP/Skill） | [references/middleware-workspace.md](references/middleware-workspace.md) |
@@ -520,6 +576,7 @@ credential.get_tts_model_classes()      # list[TTS 模型类]（未支持返回�
 credential.list_tts_models()            # list[TTSModelCard]
 credential.get_asr_model_classes()      # list[ASR 模型类]（v2.0.11+，未支持返回空列表）
 credential.list_asr_models()            # list[ASRModelCard]（v2.0.11+）
+credential.get_voice_cloning_client_class()  # 语音复刻 client 类或 None（v2.0.12+，OpenAI/DashScope）
 ```
 
 详见 [references/models.md](references/models.md)。
@@ -554,6 +611,7 @@ agent = Agent(
         max_iters=50,                   # 最大迭代次数（v2.0.7+ 默认 50，此前为 20）
         # v2.0.8：达到上限且尚无最终消息时，先注入提示并禁用工具强制一次
         # 最终文本总结，再以 finished_reason=EXCEED_MAX_ITERS 结束
+        # v2.0.12+：经 HITL 恢复完成的轮次同样计入 max_iters
         stop_on_reject=False,
     ),
     model_config=ModelConfig(           # 模型重试配置
@@ -580,6 +638,26 @@ await agent.observe(other_agent_msg)
 await agent.compress_context()
 await agent.compress_context(instructions=HintBlock(hint="压缩时保留关键决策依据"))
 ```
+
+**运行中引导 Steering（v2.0.12+）**：reply 进行中追加用户输入，不打断模型/工具调用，
+在下一个推理边界以 `HintBlock` 注入、同一条 reply 内继续：
+
+```python
+from agentscope.middleware import SteeringMiddleware, SteeringQueue
+
+queue = SteeringQueue()
+agent = Agent(name="Jarvis", system_prompt="...", model=model,
+              middlewares=[SteeringMiddleware(queue)])
+
+async for event in agent.reply_stream(user_msg):
+    if event.type == "REPLY_START":          # 此时输入窗口已打开
+        receipt = queue.submit(UserMsg("user", "顺便把单测也补上"),
+                               session_id=agent.state.session_id, reply_id=event.reply_id)
+print(await receipt.wait())   # injected / unconsumed / failed（勿在循环体内 await，会卡住事件流）
+```
+
+详见 [references/middleware-workspace.md](references/middleware-workspace.md)（服务化对应
+`POST /chat/queue/{item_id}/steer`）。
 
 ## 事件系统
 
@@ -772,7 +850,8 @@ res.content["severity"]  # ScoreAnswer: score/confidence/legend/probabilities
 ```
 
 - 需 `pip install "agentscope[classifier-jev]"`（typesafe-sdk），模型默认 `jev-latest`。
-- `TypeSafeCredential` 只服务分类器（`get_chat_model_class()` 抛 NotImplementedError）。
+- `TypeSafeCredential` 只服务分类器（`get_chat_model_class()` 抛 NotImplementedError；v2.0.12+
+  已注册进 `CredentialFactory`，`list_models()` 返回 `[]`）。
 - v2.0.10+ 新增 `OpenAIClassifierModel` 接 OpenAI Decisions API
   （需 `openai>=3.26.0`，默认模型 `gpt-6-luna`，用 `OpenAICredential`）：输入额外支持
   `list[TextBlock | DataBlock]`（图片须 `Base64Source`）；provider 拒答某题时该题返回

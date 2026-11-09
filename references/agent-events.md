@@ -101,6 +101,10 @@ react_config = ReActConfig(
 )
 ```
 
+> v2.0.12+：经 HITL 恢复（回灌 `UserConfirmResultEvent` / `ExternalExecutionResultEvent`）补齐一轮
+> 最后一个工具结果时，该轮同样计入 `cur_iter`（此前经暂停/恢复完成的轮次不计数，可借此绕过
+> `max_iters` 上限）。
+
 ## ModelConfig
 
 ```python
@@ -177,7 +181,7 @@ context_config = ContextConfig(
 | `UserConfirmResultEvent` | 用户确认结果（用于继续回复） |
 | `ExternalExecutionResultEvent` | 外部执行结果（用于继续回复） |
 | `UserInterruptEvent` | 用户中断（用于中止一个 parked reply，v2.0.4+） |
-| `CustomEvent` | 服务层自定义事件（type=`"CUSTOM"`，含 name/value，用于中间件通知前端状态/团队成员/权限变更等；v2.0.12+ 含 MCP 工具进度 `name="mcp_progress"`，value 带 `reply_id`/`tool_call_id`/`progress`/`total`/`message`，`Msg.apply_event` 跳过 CUSTOM 事件不改消息内容） |
+| `CustomEvent` | 服务层自定义事件（type=`"CUSTOM"`，含 name/value，用于中间件通知前端状态/团队成员/权限变更等；v2.0.12+ 含 MCP 工具进度 `name="mcp_progress"`，value 带 `reply_id`/`tool_call_id`/`progress`/`total`/`message`，`Msg.apply_event` 跳过 CUSTOM 事件不改消息内容；v2.0.12+ 另有 `tts_error`（value `{reply_id, stage}`，见 TTSMiddleware）、服务化聊天队列的 `chat_input_started` / `chat_input_failed` / `chat_input_cancelled` / `chat_queue_changed` 与 steering 结果 `chat_input_injected` / `chat_input_steer_failed`） |
 
 ### 所有事件的公共字段
 
@@ -637,6 +641,7 @@ agent = Agent(
         time_interval=0.5,            # 小时；距上次注入超过该值再注入时间
         # context_buffer_ratio 已 deprecated（v2.0.8），
         # 改设在 ContextConfig.context_buffer_ratio；此处传值仍生效并覆盖
+        # （v2.0.12+ 覆盖作用于 ContextConfig 的深拷贝，多个 agent 共享的实例不再被突变）
         template="...{runtime_state}...",  # 必须含 {runtime_state} 占位符
         task_tool_names=["TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
         emit_hint_event=True,         # 是否发 HintBlockEvent 供前端展示

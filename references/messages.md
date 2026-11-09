@@ -19,6 +19,8 @@ msg = Msg(
 
 > `Usage` 在 v2.0.7+ 新增两个缓存统计字段：`cache_input_tokens`（命中提示词缓存的输入
 > token 数）与 `cache_creation_input_tokens`（写入提示词缓存的输入 token 数），均默认 0。
+> 二者是 `input_tokens` 的**子集**（`input_tokens` 为整个 prompt 的 token 数）；v2.0.12+ Anthropic /
+> MiniMax 也对齐此口径（此前其 `input_tokens` 不含缓存部分）。
 
 ## 工厂函数（推荐用法）
 
@@ -73,6 +75,11 @@ HintBlock(hint="给 LLM 的提示指令")
 # 传给 LLM 时会被转换为 user 消息
 ```
 
+> v2.0.12+：`*MultiAgentFormatter` 不再丢弃 assistant 消息组里的 HintBlock（此前只处理 Text/Data，
+> 运行时注入的时间/任务/压缩预警、RAG static 等 hint 在多智能体格式化器下可能到不了模型）——
+> 消息组在每个 HintBlock 处切开：hint 单独成一条与对应 ChatFormatter 输出一致的 user 消息，
+> 前后历史各成一条 `<history>…</history>` user 消息（`conversation_history_prompt` 只加在第一段）。
+
 ### DataBlock（替代 v1 的 Image/Audio/Video Block）
 ```python
 from agentscope.message import DataBlock, Base64Source, URLSource
@@ -89,6 +96,29 @@ DataBlock(source=URLSource(url="https://...", media_type="image/jpeg"))
 - `URLSource(url: str, media_type: str)` — 远程 URL，一次性加载；也接受 `file://` 本地文件
   URL（各 formatter 会读文件并转 base64 上传，v2.0.11+ 起百分号编码的路径——如含中文/空格——
   先解码再打开）。
+
+**provider 专属媒体参数（v2.0.12+）**：`DataBlock` 为 `extra="allow"`，可直接附带额外关键字参数
+（存于 `block.model_extra`，随 `model_dump()`/持久化往返保留），由各 formatter 按目标 API 的嵌套规则放置：
+
+```python
+DataBlock(source=URLSource(url="https://example.com/a.png", media_type="image/png"), detail="high")
+# OpenAI Chat → {"type": "image_url", "image_url": {"url": "...", "detail": "high"}}
+DataBlock(source=URLSource(url="https://example.com/v.mp4", media_type="video/mp4"), fps=2)
+# DashScope → {"type": "video_url", "video_url": {"url": "..."}, "fps": 2}
+```
+
+| Formatter | 额外参数放置位置 |
+|---|---|
+| OpenAI Chat（含 DeepSeek） | image 嵌入 `image_url` 对象、audio 嵌入 `input_audio` 对象；PDF 不转发 |
+| OpenAI Responses | 平铺到 `input_image` 项顶层；PDF/音频不转发 |
+| Anthropic（MiniMax 图片/PDF 同） | image / PDF document 内容块顶层（如 `cache_control={"type": "ephemeral"}`） |
+| DashScope | image/video/audio 内容项顶层（如 `fps`、`snippet`） |
+| Gemini | part 顶层，与 `inline_data` 同级（如 `video_metadata={"fps": 2}`） |
+| Moonshot | image/video 嵌入 `image_url`/`video_url` 对象 |
+| xAI | 作为关键字参数传给 `xai_sdk.chat.image(url, **extras)`（只能用该函数接受的参数） |
+| Volcengine / Ollama / MiniMax 视频 | 不转发 |
+
+框架不校验键名，与 formatter 自身生成的同名键会覆盖后者。
 
 ### ToolCallBlock
 ```python
@@ -128,7 +158,7 @@ ToolResultBlock(
 ## Msg 实用方法
 
 ```python
-msg.get_text_content()                # 提取所有 TextBlock 文本（"\n" 分隔）
+msg.get_text_content()                # 拼接顶层 TextBlock 文本（separator 默认 "\n"），恒返回 str——v2.0.12+ 无文本块时返回 ""（此前为 None）；区分"无文本块"与"空文本"用 has_content_blocks("text")
 msg.has_content_blocks("tool_call")   # 检查是否包含指定类型
 msg.has_content_blocks(["tool_call", "tool_result"])  # 支持列表
 msg.get_content_blocks("text")        # 获取指定类型的 block 列表

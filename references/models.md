@@ -67,9 +67,13 @@ rt_cards = credential.list_realtime_models()           # -> list[RealtimeModelCa
 # ASR 语音转写模型（v2.0.11+）
 asr_classes = credential.get_asr_model_classes()    # -> list[ASRModelBase 子类]
 asr_cards = credential.list_asr_models()            # -> list[ASRModelCard]
+
+# 语音复刻 client（v2.0.12+）
+clone_cls = credential.get_voice_cloning_client_class()  # -> Type[VoiceCloningClientBase] | None
+# OpenAI -> OpenAIVoiceCloningClient；DashScope -> DashScopeVoiceCloningClient；其余 None
 ```
 
-> 各提供商支持的能力不同：DashScope 同时支持对话/Embedding/TTS；OpenAI/Gemini/Ollama 支持 Embedding（`get_embedding_model_class()`）；OpenAI 另提供 ASR（`get_asr_model_classes()`，v2.0.11+）；多数提供商的 TTS 列表为空。
+> 各提供商支持的能力不同：DashScope 同时支持对话/Embedding/TTS/ASR（ASR 为 v2.0.12+）；OpenAI/Gemini/Ollama 支持 Embedding（`get_embedding_model_class()`）；OpenAI 另提供 ASR（`get_asr_model_classes()`，v2.0.11+）；OpenAI 与 DashScope 提供语音复刻 client（v2.0.12+）；多数提供商的 TTS 列表为空。
 >
 > v2.0.12+ 起 `list_models()` 合并 `get_chat_model_classes()` 返回的**所有**类的模型卡，
 > 每张 `ModelCard` 新增 `model_class` 字段标识所属模型类（如 `openai_chat` / `openai_response`），
@@ -82,8 +86,14 @@ asr_cards = credential.list_asr_models()            # -> list[ASRModelCard]
 ```python
 from agentscope.credential import CredentialFactory
 
-credential = CredentialFactory.from_dict({"type": "openai", "api_key": "sk-xxx"})
+credential = CredentialFactory.from_dict({"type": "openai_credential", "api_key": "sk-xxx"})
 ```
+
+- 判别字段 `type` 取各 credential 类的 `type` 字面量（如 `openai_credential` / `dashscope_credential`）；
+  内置类均已预注册，自定义类用 `CredentialFactory.register_credential(cls)` 注册，
+  `get_credential_class(type)` / `list_schemas()` 查询。
+- v2.0.12+ `TypeSafeCredential`（`type="typesafe_credential"`）也注册进工厂（服务化可保存该凭据），
+  其 `list_models()` 返回 `[]`（此前抛 `NotImplementedError`），`get_chat_model_class()` 仍抛。
 
 ## ChatModelBase
 
@@ -138,6 +148,38 @@ model = credential.get_chat_model_class()(
 > 三张模型卡），Kimi K2.7 Code 系列模型卡启用图片与视频输入，
 > 均可通过 `credential.list_models()` 查到。`kimi-k3` 在 `MoonshotChatModel` 中额外支持
 > `reasoning_effort: "low"|"high"|"max"` 参数。
+> v2.0.12+：新增 `kimi-k3.1-pro` / `kimi-k3.1-pro-highspeed` 模型卡（1048576 上下文与输出，图片 +
+> 视频输入）。K3 系列（`kimi-k3` / `kimi-k3.1-pro` / `kimi-k3.1-pro-highspeed`，按名精确匹配）**始终思考**
+> （`thinking_enable` 被忽略、`thinking` 字段被剥离）；`temperature` / `top_p` / `n` / `presence_penalty` /
+> `frequency_penalty` 无论来自 Parameters、调用级还是 `extra_body` 都被静默剥离；`max_tokens` 改名为
+> `max_completion_tokens` 发送；指名工具的 `tool_choice` 改为只发该工具 + `required`。
+> `ModelCard` 有 `status`（`active` / `deprecated` / `sunset`）与 `deprecated_at` 字段，`list_models()`
+> 不按状态过滤——v2.0.12+ `claude-sonnet-4-5` 标为 `deprecated`（`deprecated_at` 2026-11-30）。
+
+### 思考开关 thinking_enable 三态（v2.0.12+）
+
+全部 11 个 chat 适配器的 `Parameters.thinking_enable` 统一为 `bool | None = None`：**`None`（默认）
+不发送任何思考参数、交给 provider 默认**；`True` / `False` 显式开 / 关：
+
+| 适配器 | `True` | `False` | `None`（默认） |
+|---|---|---|---|
+| DeepSeek / Moonshot（非 K3） | `extra_body.thinking.type="enabled"` | `"disabled"` | 不发（此前默认发 disabled） |
+| DashScope | `extra_body.enable_thinking=True` | `False` | 不发（此前默认发 False） |
+| Ollama | `think=True` | `think=False` | 不发（此前默认发 False） |
+| Gemini | `thinking_config={include_thoughts: True, thinking_budget: budget or 1024}` | `{include_thoughts: False, thinking_budget: 0}` | 不发（此前默认强制关闭） |
+| Anthropic | budget-based `enabled`（`thinking_mode` 优先级更高） | `thinking={"type": "disabled"}`（此前等同不发） | 不发 |
+| MiniMax | `{"type": "adaptive"}` | `{"type": "disabled"}`（M3 接受、M3.1-Flash 拒绝） | 不发 |
+| OpenAI Chat / Responses | 发 `reasoning_effort`（若设） | `reasoning_effort="none"`（Responses 为 `reasoning={"effort": "none"}`） | 发 `reasoning_effort`（若设） |
+| xAI | 发 `reasoning_effort`（若设） | 调用时抛 `ValueError`（SDK 不支持关闭思考） | 发 `reasoning_effort`（若设） |
+| Volcengine（v2.0.8 起即三态） | `extra_body.thinking.type="enabled"` | `"disabled"` | 不发（Ark 默认 auto） |
+
+> ⚠️ 迁移：DeepSeek / DashScope / Ollama / Moonshot（非 K3）/ Gemini 此前默认**强制关闭**思考，
+> 现在默认思考的模型会开始输出 ThinkingBlock、消耗更多 token——要保持旧行为须显式
+> `thinking_enable=False`。OpenAI / xAI 的 `reasoning_effort` 不再要求同时 `thinking_enable=True`
+> （单独设即生效）；对非推理模型或 OpenAI 兼容端点显式设 `False` 会发出 `reasoning_effort="none"`，
+> 可能被服务端拒绝。gpt-6-luna / gpt-6-sol / gpt-6.1-sol 模型卡不再隐藏 `reasoning_effort`。
+> 调用级覆盖（如 DeepSeek `extra_body={"thinking": ...}`、Ollama `think=`、Gemini `thinking_config=`）
+> 只在直接调用 `model(...)` 时有效，Agent 内部调用不传这些参数，需用 `Parameters` 配置。
 
 ### OpenAI Chat 模型专属参数
 
@@ -160,6 +202,10 @@ model = OpenAIChatModel(
 
 > ℹ️ `OpenAIChatModel.Parameters.max_tokens` 字段名不变（v2.0.4.post1+），但发送到 OpenAI API 时
 > 会被映射为请求体里的 `max_completion_tokens` 键（对齐 OpenAI 新版 Chat Completions API）。
+
+> ℹ️ v2.0.12+：`OpenAIChatFormatter` 发送的消息 `name` 自动规范化——每段连续的空白或 `<` `|` `\` `/` `>`
+> 替换为一个 `_`（如 `"Research Assistant"` → `"Research_Assistant"`），空名省略 `name` 键（API 要求
+> `^[^\s<|\\/>]+$`，否则 400）。只影响发给 API 的字段，`Msg.name` 本身与 tool 消息的工具名不变。
 
 ### Anthropic Chat 模型专属参数
 
@@ -188,6 +234,15 @@ model = AnthropicChatModel(
 
 > ℹ️ 旧参数 `thinking_enable` + `thinking_budget` 仍保留（budget-based `enabled` 模式）。新的 `thinking_mode`
 > 是推荐用法，自动按模式组装 `thinking` 字段（`adaptive`/`disabled` 不带 budget，`enabled` 才带 budget_tokens）。
+>
+> ℹ️ v2.0.12+ 有效模式优先级：`thinking_mode` > `thinking_enable=False`（→ `disabled`，此前等同不发）>
+> `thinking_enable=True`（→ `enabled`）> `None`（不发 thinking）。有效 `max_tokens` 取
+> `extra_body["max_tokens"]` > 调用级 `max_tokens=` > `Parameters.max_tokens` > 默认 8192。`enabled` 模式
+> 未设 `thinking_budget` 时 budget 取 `max(1024, 有效max_tokens // 2)`（此前忽略调用级 max_tokens），
+> 有效 max_tokens ≤ 1024 时发请求前抛 `ValueError`；显式 `thinking_budget` 原样发送由 provider 校验，
+> 仅当各层都没给 max_tokens 且 budget ≥ 8192 时自动把 max_tokens 设为 budget + 1024（显式上限不再被改写）。
+> 调用级 `thinking=` 或 `extra_body["thinking"]` 存在时完全跳过自动构建，如
+> `model(msgs, max_tokens=1000, thinking={"type": "disabled"})`。
 
 ### Volcengine Chat 模型（v2.0.8+）
 
@@ -210,12 +265,22 @@ model = VolcengineChatModel(
 )
 ```
 
-配套的 `VolcengineChatFormatter` / `VolcengineMultiAgentFormatter` 由模型内部默认使用，无需手动指定。
+配套的 `VolcengineChatFormatter` 由模型内部默认使用；多智能体场景的 `VolcengineMultiAgentFormatter`
+需经 `formatter=` 显式传入。
+
+v2.0.12+ 支持**音频输入**：`VolcengineChatFormatter` 默认 `input_types` 追加 `audio/mpeg`、`audio/mp3`、
+`audio/wav`、`audio/aac`、`audio/mp4`，编码为 Ark 的 `{"type": "input_audio", "input_audio": {"format": ...}}`
+（mpeg/mp3→`mp3`、wav→`wav`、aac→`aac`、mp4→`m4a`）：`Base64Source` 放原始 base64（不带 `data:` 前缀），
+`file://` 本地文件读取后转 base64，http(s) URL 原样放进 `url` 字段透传。默认列表外的音频类型（如 ogg）
+告警跳过；把 `input_types` 放宽到映射外的类型会抛 `TypeError`。内置模型卡中只有
+`doubao-seed-2-1-lite-260915` 声明了音频输入（服务化按模型卡覆盖 formatter 的 `input_types`）；
+示例见上游 `scripts/model_examples/volcengine_multimodal.py`。
 
 ### MiniMax Chat 模型（v2.0.9+）
 
 `MiniMaxChatModel` 接入 MiniMax 的 **Anthropic 兼容端点**（继承 `AnthropicChatModel`），
-支持自适应思考参数：
+支持自适应思考参数（v2.0.12+ `thinking_enable=False` 发 `disabled`，取决于模型是否接受；
+`None` 默认不发）：
 
 ```python
 from agentscope.credential import MiniMaxCredential
@@ -230,7 +295,7 @@ model = MiniMaxChatModel(
     credential=credential,
     model="MiniMax-M3",                    # 默认推荐（1M 上下文，多模态输入）
     parameters=MiniMaxChatModel.Parameters(
-        thinking_enable=True,              # 自适应思考
+        thinking_enable=True,              # 自适应思考（False 发 disabled，None 默认不发）
     ),
 )
 ```
@@ -296,6 +361,10 @@ result = await model.generate_structured_output(
 # result.content 是 dict
 ```
 
+> 失败时按 `forced`（强制 tool_choice）→ `auto` → `no_think`（关思考 + 强制 tool_choice，仅当适配器
+> 实现了 `_get_disable_thinking_kwargs()`）→ `none` 逐级降级重试；v2.0.12+ Ollama 也参与
+> `no_think` 一级（`think=False`），Moonshot K3 系列因始终思考而跳过该级。
+
 ### 相关类型
 
 ```python
@@ -306,6 +375,12 @@ from agentscope.model import (
     ModelCard,          # 模型卡片
 )
 ```
+
+> `ChatUsage.input_tokens` 是整个 prompt 的输入 token 数，**包含** `cache_input_tokens`（缓存读）与
+> `cache_creation_input_tokens`（缓存写）。v2.0.12+ Anthropic（及继承它的 MiniMax）对齐此口径——
+> `input_tokens = input + cache_creation + cache_read`，流式取 `message_delta` 的累计值；开启 prompt
+> caching 时 `ModelCallEndEvent.input_tokens`、`Msg.usage`、tracing 与 `ReplyBudgetControlMiddleware`
+> 的输入计费数值随之变大。
 
 ## 在 Agent 中使用
 
@@ -371,8 +446,10 @@ emb_model = OpenAIEmbeddingModel(
     credential=credential,
     model="text-embedding-3-small",
     dimensions=512,             # 必填：输出向量维度（契约参数）
-    parameters=None,            # 各 provider 的 Parameters 子类；None 用默认
+    parameters=None,            # EmbeddingModelBase.Parameters（extra="allow"，额外字段透传，如 DashScope 文本
+                                # text_type/instruct、Gemini 文本 task_type）；None 用默认
     pass_dimensions=True,       # 仅 OpenAI：是否把 dimensions 发给 API（默认 True）
+    embedding_cache=None,       # EmbeddingCacheBase（如 FileEmbeddingCache()），四个 provider 均支持
     context_size=8191,          # 单条输入 token 上限（OpenAI 默认 8191，其余 8192）
     max_retries=3,              # 每批重试次数（默认 3）
     retry_delay=1.0,            # 重试间隔（默认 1.0s）
@@ -392,6 +469,13 @@ response = await emb_model(inputs=["hello", "world"])
 # 多模态：DashScopeEmbeddingModel/GeminiEmbeddingModel 的 inputs 可含 DataBlock
 ```
 
+> 调用级参数（v2.0.12+ 各 provider 对齐）：`await emb_model(inputs, **kwargs)` 的 kwargs 优先于
+> 构造 `parameters`，再优先于内置默认——OpenAI per-call `dimensions` 可覆盖实例值（此前被静默覆盖；
+> `pass_dimensions=False` 时实例值不发，per-call 值照常透传）；DashScope 文本路径合并 `parameters`
+> （此前被忽略）且 per-call `api_key` 可用（此前报关键字重复 TypeError）。DashScope/Gemini 的
+> **多模态路径只合并 per-call kwargs、不合并 `parameters`**。调用参数计入缓存 key（`api_key` 除外，
+> 换 key 仍可命中旧缓存）。
+
 ### provider 差异
 
 | Provider | 输入类型 | 多模态 | 备注 |
@@ -401,11 +485,17 @@ response = await emb_model(inputs=["hello", "world"])
 | `GeminiEmbeddingModel` | `str \| DataBlock` | ✅ | 图像/视频/音频/PDF，有每请求元素数限制；`parameters` 可配 `task_type` 等文本参数（v2.0.11+ 起真正传给 API，此前被忽略；per-call kwargs 优先）；per-call `output_dimensionality` 可覆盖构造时 `dimensions`（v2.0.11+，此前传入会因关键字冲突报错） |
 | `OllamaEmbeddingModel` | `str` | ❌ | 构造时创建一次 `AsyncClient`（host 取自 credential 或 `OLLAMA_HOST`）；`embedding_cache` 按 host 隔离（v2.0.10+，解析后的 endpoint 计入缓存 key，不同端点同名模型不互相命中）；`usage.tokens` 保留服务端 `prompt_eval_count`（v2.0.11+，此前恒为 None） |
 
-> DashScope 多模态可配 `embedding_cache=FileEmbeddingCache()` 启用文件缓存；v2.0.8+ 起
+> 四个 provider 均可配 `embedding_cache=FileEmbeddingCache()` 启用文件缓存（签名
+> `FileEmbeddingCache(cache_dir="./.cache/embeddings", max_file_number=None, max_cache_size=None)`，
+> `max_cache_size` 单位 MB；v2.0.12+ 负值构造即抛 `ValueError`，此前静默等同 0）；v2.0.8+ 起
 > 单个向量集文件超过 `max_cache_size` 时直接不入缓存（记 warning），不再因按最旧驱逐而清空整个缓存；
 > v2.0.10 起 `max_file_number=0` 真正生效（写后不保留任何缓存文件，`None` 才是不限），且新文件
-> 因超过 `max_cache_size` 被拒后，文件数上限仍独立执行。
-> 响应解析已兼容服务端省略 `index`、或在 `embedding` 为空时回退到 `dense_embedding` 的情况。
+> 因超过 `max_cache_size` 被拒后，文件数上限仍独立执行。v2.0.12+：Gemini 多模态路径同样读写缓存
+> （此前完全不走缓存）；DashScope 多模态缓存 key 改用深拷贝（SDK 上传本地/base64 图片时就地改写
+> `input`，导致写入与查询的 key 不一致、多模态缓存从不命中）。
+> 响应解析：OpenAI 兼容服务端省略 `index`、或在 `embedding` 为空时回退到 `dense_embedding`；
+> v2.0.12+ DashScope 文本按 `text_index`、多模态按 `index` 还原输入顺序（缺失时按原位置，
+> 此前服务端乱序返回会让向量与输入错配）。
 > v2.0.8+：是否多模态以公开属性 `supports_multimodal` 暴露（DashScope/Gemini 均支持），
 > 可在运行时据此决定输入走文本还是多模态路径。
 > v2.0.11+：多模态路径同样把构造时的 `dimensions` 作为 `dimension` 传给 API
@@ -431,6 +521,10 @@ from agentscope.tts import (
     DashScopeRealtimeTTSModel,         # Qwen3 实时流式输入
     DashScopeCosyVoiceTTSModel,        # CosyVoice 普通/实时（v2.0.4+）
     GeminiTTSModel,                    # Gemini TTS（gemini-2.5-flash/pro-preview-tts，v2.0.5+）
+    VoiceCloningClientBase,            # v2.0.12+ 语音复刻 client 基类
+    OpenAIVoiceCloningClient,          # v2.0.12+
+    DashScopeVoiceCloningClient,       # v2.0.12+
+    VoiceCloningError,                 # v2.0.12+ provider 侧复刻失败（RuntimeError 子类）
 )
 ```
 
@@ -486,7 +580,8 @@ tts = OpenAITTSModel(
     credential=credential,
     model="gpt-4o-mini-tts",   # 或 tts-1 / tts-1-hd
     parameters=OpenAITTSModel.Parameters(
-        voice="alloy",                      # 音色：alloy/echo/fable/onyx/nova/shimmer 等
+        voice="alloy",                      # 音色：alloy/echo/fable/onyx/nova/shimmer 等；v2.0.12+ 类型为
+                                            # str | dict，克隆音色传 {"id": voice_id}（仅 gpt-4o-mini-tts）
         response_format="mp3",              # mp3/opus/aac/flac/wav/pcm
         instructions=None,                  # 仅 gpt-4o-mini-tts 支持：自然语言风格指令
     ),
@@ -526,7 +621,8 @@ resp = await tts.synthesize(text="Hello")
 
 > 各提供商的 TTS 能力：OpenAI 提供 `OpenAITTSModel`（非实时），DashScope 提供
 > `DashScopeTTSModel`（普通）/`DashScopeRealtimeTTSModel`（Qwen3 实时）/`DashScopeCosyVoiceTTSModel`
-> （CosyVoice 普通+实时），Gemini 提供 `GeminiTTSModel`（v2.0.5+，非实时）；
+> （CosyVoice 普通+实时），Gemini 提供 `GeminiTTSModel`（v2.0.5+，非实时；v2.0.12+ 多个音频候选只取
+> 第一个——候选是互为替代的录音，此前被拼接在一起）；
 > 其余提供商（Anthropic/Ollama 等）当前不提供 TTS，`get_tts_model_classes()` 返回空列表。
 
 TTS 的核心 API：
@@ -547,13 +643,68 @@ TTS 的核心 API：
 > 构造时可用 `stream=True/False` 控制 `synthesize()` 返回增量流还是聚合结果，用
 > `Parameters(realtime=True)` 开启流式输入。CosyVoice 由服务端按句切分，`push` 在文本不足以成句时
 > 可能返回空，需调 `synthesize()` 强制输出剩余文本。该模型仍处于开发中，行为细节可能调整。
+> v2.0.12+：同一类还承载 `cosyvoice-v3.5-plus/flash`（**无预置音色**，只能用复刻音色）与
+> `qwen-audio-3.0/3.1-tts-flash/plus` 模型卡；实时 `push` 冷启动阶段发送失败返回空响应并保留缓冲
+> （下次 push 整段重试），冷启动之后的发送失败**直接抛出原异常**（此前静默返回空、该段文本丢失），
+> 抛出前回滚累计文本，调用方重试不会重复计数。
+
+> v2.0.12+ DashScope 端点路由：`DashScopeCredential` 新增 `websocket_url`（`ws(s)://`，CosyVoice /
+> Qwen Audio 走网关时显式指定，优先级最高）；未设时，非默认的官方端点（国际/美区等）与带标准 API
+> 后缀的网关由 `base_url` 推导 `wss://…/api-ws/v1/inference`，默认端点与其他网关形态仍沿用 SDK
+> 环境变量/全局配置（HTTP 与 WebSocket 路由分离的网关请两个 URL 都显式设置）。`DashScopeTTSModel` 在显式设置
+> `base_url` 时把其 API 后缀换成 `/api/v1` 作为 `base_address`（此前 `base_url` 对它不生效），
+> 调用级 `base_address=` 可覆盖。依赖要求 `dashscope>=1.20.0`。
 
 > 通常无需手动调用 TTS 模型，配合 `TTSMiddleware` 即可把智能体回复自动转语音（见 middleware 文档）。
 
+### 语音复刻 VoiceCloningClient（v2.0.12+）
+
+用一段音频样本在 provider 侧注册自定义音色，返回 **provider 的 voice id**，再作为对应 TTS
+模型的 `voice` 参数使用。`VoiceCloningClientBase` 是独立于 `TTSModelBase` 的类层次（自定义
+TTS 不受影响），经 `credential.get_voice_cloning_client_class()` 获取：
+
+```python
+from agentscope.credential import OpenAICredential, DashScopeCredential
+from agentscope.tts import (
+    OpenAITTSModel, OpenAIVoiceCloningClient,
+    DashScopeCosyVoiceTTSModel, DashScopeVoiceCloningClient,
+)
+
+# OpenAI：先上传说话人授权录音（须朗读 provider 规定的声明原文），再创建音色
+client = OpenAIVoiceCloningClient(OpenAICredential(api_key="sk-xxx"))
+consent_id = await client.create_consent(consent_wav, name="Alice consent",
+                                         language="zh", filename="consent.wav")
+voice_id = await client.create_voice(sample_mp3, filename="sample.mp3",
+    parameters=client.Parameters(name="Alice", consent=consent_id))
+tts = OpenAITTSModel(credential=..., model="gpt-4o-mini-tts",
+    parameters=OpenAITTSModel.Parameters(voice={"id": voice_id}))   # 自定义音色传 dict
+
+# DashScope：CosyVoice 只收公网 audio_url；Qwen-TTS / Qwen Audio 只收音频字节
+ds = DashScopeVoiceCloningClient(DashScopeCredential(api_key="ds-xxx"))
+voice_id = await ds.create_voice(audio_url="https://example.com/sample.mp3",
+    parameters=ds.Parameters(target_model="cosyvoice-v3-plus"))
+cosy = DashScopeCosyVoiceTTSModel(credential=..., model="cosyvoice-v3-plus",
+    parameters=DashScopeCosyVoiceTTSModel.Parameters(voice=voice_id))
+```
+
+- 契约：`create_voice(audio=None, *, filename="voice.wav", audio_url=None, parameters=None) -> str`，
+  `audio` 与 `audio_url` 二选一；输入非法抛 `ValueError`，provider 失败抛 `VoiceCloningError`
+  （`RuntimeError` 子类）。创建非幂等，只发一次请求、不重试（超时 60s）。
+- `OpenAIVoiceCloningClient.Parameters(name="agentscope", consent=必填)`；不支持 `audio_url`。
+- `DashScopeVoiceCloningClient.Parameters(target_model=必填, prefix="agentscope", text=None)`：
+  `target_model` 决定注册协议（`cosyvoice-*`/`qwen-audio-*` → `voice-enrollment`，其余 `qwen*` →
+  `qwen-voice-enrollment`，`get_enrollment_model(model)` 可查）；`text` 仅用于 Qwen-TTS 注册。
+  复刻出的音色须用**同一 credential、同一 target_model** 合成。
+- `TTSModelCard.voice_cloning: bool`（YAML 键 `voice_cloning`）标记支持复刻的模型：
+  `gpt-4o-mini-tts`、`cosyvoice-v3-flash/plus`、`cosyvoice-v3.5-flash/plus`（无预置音色，只能用
+  复刻音色）、`qwen-audio-3.0/3.1-tts-flash/plus`。同期 OpenAI 预置音色调整：`tts-1`/`tts-1-hd`
+  去掉 `ballad`/`verse`，`gpt-4o-mini-tts` 新增 `marin`/`cedar`。
+- 服务化有 `/voice-profile` 音色档案端点，见 [middleware-workspace.md](middleware-workspace.md)。
+
 ## ASR 语音转写模型（v2.0.11+）
 
-> ⚠️ 实验性 / 积极开发中：`asr` 模块属于官方 Voice Agent 路线，当前只有 OpenAI 批式实现，
-> API 可能随版本变动。
+> ⚠️ 实验性 / 积极开发中：`asr` 模块属于官方 Voice Agent 路线，v2.0.12+ 起有 OpenAI 批式与
+> DashScope 批式/实时实现，API 可能随版本变动。
 
 `agentscope.asr` 提供语音转文字（transcription）的统一接口，与 TTS 镜像对称：
 `ASRModelBase` 同时定义**批式**（一次性转写完整音频）与**实时**（增量推送音频流）两种协议，
@@ -562,9 +713,11 @@ TTS 的核心 API：
 ```python
 from agentscope.asr import (
     ASRModelBase,      # 抽象基类（批式 + 实时双协议）
-    ASRModelCard,      # 模型卡（name/label/input_types/realtime/parameter_schema）
+    ASRModelCard,      # 模型卡（name/label/input_types/output_types/realtime/parameter_schema/parameters_overrides）
     ASRResponse,       # 转写响应
     OpenAIASRModel,    # OpenAI Audio Transcriptions API（批式）
+    DashScopeASRModel,           # DashScope 批式（v2.0.12+）
+    DashScopeRealtimeASRModel,   # DashScope 实时（v2.0.12+）
 )
 ```
 
@@ -599,11 +752,51 @@ resp.is_last        # 批式结果恒为 True
 - 内置模型卡：`gpt-4o-mini-transcribe` / `gpt-4o-transcribe`，输入
   flac / mpeg / mp4 / ogg / wav / webm。
 
+### DashScope 转写（v2.0.12+）
+
+`DashScopeCredential.get_asr_model_classes()` 返回 `[DashScopeASRModel, DashScopeRealtimeASRModel]`：
+
+```python
+from agentscope.credential import DashScopeCredential
+from agentscope.asr import DashScopeASRModel, DashScopeRealtimeASRModel
+
+credential = DashScopeCredential(api_key="ds-xxx")
+
+# 批式：默认 qwen-audio-3.1-asr-flash（另有 qwen-audio-3.0-asr-flash）
+asr = DashScopeASRModel(
+    credential=credential,
+    parameters=DashScopeASRModel.Parameters(
+        language_hints=["zh"],              # 最多 4 个
+        keep_dialect=False,
+        speaker_diarization_enabled=False,
+        vocabulary=None,                    # dict[str, int] 热词
+    ),
+)
+resp = await asr.transcribe(audio_bytes, filename="meeting.mp3")   # 按扩展名定格式
+
+# 实时：默认 qwen-audio-3.1-asr-flash-streaming，输入 PCM16（需 agentscope[realtime] 的 websockets）
+rt = DashScopeRealtimeASRModel(
+    credential=credential,
+    parameters=DashScopeRealtimeASRModel.Parameters(sample_rate=16000, language_hints=["zh"]),
+)
+async with rt:
+    partial = await rt.push(pcm16_chunk)   # ⚠️ 返回累计全文（已定稿句 + 当前句），不是增量
+    final = await rt.transcribe()          # 收尾，is_last=True
+```
+
+- 批式支持 aac/amr/flac/m4a/mp3/mp4/mpeg/ogg/opus/wav/webm，空音频或扩展名不支持抛 `ValueError`；
+  参数优先级 kwargs > `parameters`；`qwen-audio-3.0-asr-flash` 自动去掉它不支持的
+  `keep_dialect` / `speaker_diarization_enabled`；API 非 200 或无文本抛 `RuntimeError`。
+- 实时 `Parameters` 另有 `vad_model`（`near_meeting_16k` / `far_field_meeting_16k`，默认后者）、
+  `vocabulary_id`、`semantic_punctuation_enabled=True`；连接 `wss://{base_url 主机}/api-ws/v1/inference`；
+  启动/收尾超时、provider task-failed、未连接均抛 `RuntimeError`。
+- 服务化有浏览器语音输入端点 `/asr/*`，见 [middleware-workspace.md](middleware-workspace.md)。
+
 ### 实时协议（自定义实现）
 
-基类为实时实现预留了流式协议（当前无内置实现）：`async with` 进入时自动 `connect()`、
-退出时 `close()`；每个音频块调 `push(audio)` 返回**已就绪的增量文本**（`ASRResponse`，
-无新文本时 `content=None`）；最后 `transcribe(None)` 收尾（可再带最后一个音频块），
+基类为实时实现预留了流式协议（内置实现见上文 `DashScopeRealtimeASRModel`）：`async with` 进入时自动 `connect()`、
+退出时 `close()`；每个音频块调 `push(audio)` 返回**已就绪的文本**（`ASRResponse`，
+无新文本时 `content=None`；是增量还是累计全文由实现决定，DashScope 返回累计全文）；最后 `transcribe(None)` 收尾（可再带最后一个音频块），
 最终响应 `is_last=True`：
 
 ```python
@@ -619,7 +812,10 @@ async with MyRealtimeASR(credential=..., model=...) as asr:
 继承 `ASRModelBase` 并实现 `transcribe()`（抽象方法，必须）；实时实现还需覆盖
 `connect()` / `close()` / `push()` 并置 `realtime = True`。`Parameters`（pydantic BaseModel）
 声明 provider 特有参数，`list_models(custom_yaml_dir=None)` 从实现类旁的 `_models/*.yaml`
-加载模型卡（`realtime` 与实现类不一致的卡被过滤，坏卡告警跳过）。
+加载模型卡（`realtime` 与实现类不一致的卡被过滤，坏卡告警跳过）。v2.0.12+ YAML 可写
+`parameter_overrides`：`{参数名: {hidden: true}}`（或值为 null）从 `parameter_schema` 中删除该参数
+（同步移出 `required`），其他键与原属性 schema 合并——用于按模型裁剪前端可见参数，结果存于
+`ASRModelCard.parameters_overrides`。
 
 ASR 的核心 API：
 - `transcribe(audio, filename)` — 批式整段转写 / 实时收尾（最终结果 `is_last=True`）
@@ -627,10 +823,11 @@ ASR 的核心 API：
 - `connect()` / `close()` — （仅 realtime）连接生命周期，也可用 `async with`
 - `realtime: bool` — 是否支持流式输入模式
 
-> 各提供商的 ASR 能力：OpenAI 提供 `OpenAIASRModel`（批式）；其余提供商
+> 各提供商的 ASR 能力：OpenAI 提供 `OpenAIASRModel`（批式）；DashScope 提供
+> `DashScopeASRModel`（批式）/ `DashScopeRealtimeASRModel`（实时，v2.0.12+）；其余提供商
 > `get_asr_model_classes()` 当前返回空列表。注意 RealtimeAgent 场景的输入转写
-> （如 DashScope 的 `qwen3-asr-flash-realtime`）走 `agentscope.realtime` 模块的
-> 实时模型，与此批式 `asr` 模块是两条独立路径。
+> （如 DashScope 的 `qwen3-asr-flash-realtime`）由 `agentscope.realtime` 模块的实时模型自己完成，
+> 不使用 `ASRModelBase`，与 `asr` 模块是两条独立路径。
 
 ## 分类器模型 Classifier（v2.0.8+）
 
@@ -699,7 +896,8 @@ response.usage               # ClassifierUsage: time/input_tokens/output_tokens
   Jev system_one 调用，仅本次调用生效、不会被记忆到后续调用）。
 - `ClassifierResponse.model` 返回实际使用的模型名，`metadata` 携带 provider 无关的附加信息。
 - `TypeSafeCredential`（api_key + 可选 base_url）**只服务分类器**，
-  `get_chat_model_class()` 会抛 `NotImplementedError`。
+  `get_chat_model_class()` 会抛 `NotImplementedError`（v2.0.12+ `list_models()` 返回 `[]`、
+  已注册进 `CredentialFactory`）。
 
 ### OpenAIClassifierModel — OpenAI Decisions API（v2.0.10+）
 

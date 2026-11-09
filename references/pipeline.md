@@ -62,7 +62,10 @@ await launch_console(pipe)
   生成合法结构化输出的重试次数（默认 3）。⚠️ `max_retries` 自 v2.0.11+ 起才真正生效——此前参数
   仅被存储、结构化输出不合法会无限重试；现在 executor 与 verifier **各自独立计数**，超过上限抛
   `RuntimeError`（如 `The executor failed to generate a valid execution report after 3 retries.`），
-  重试预算与迭代轮数一样记在实例上，HITL 暂停恢复不会重置，新任务（首次输入）才归零。
+  HITL 暂停恢复不会重置，新任务（首次输入）归零。v2.0.12+ 预算按**单次产出**计：executor 每产出
+  一份合法执行报告、verifier 每产出一次合法裁决（pass / fail / impossible 均算）后各自归零——
+  `max_retries` 限制的是单次结构化输出的连续失败次数，不再跨多轮迭代累计（此前多轮 fail 重试中
+  零星的格式错误会累加，长任务可能被误判超限）。
 - 结构化输出不合法时，pipeline 会以 system-reminder 提示对应 agent 重新调用
   `GenerateStructuredOutput`（计入上述 `max_retries` 预算）。
 - v2.0.9+：verifier 拒绝后的重试提示以内容块形式携带**多模态目标**（goal 含图片等
@@ -104,7 +107,9 @@ await launch_console(team)   # 交互式驱动整个团队
 - **并发与串行**：同一轮被委派的多个成员并发执行；但对**同一成员**的多个委派按调用
   顺序串行（后一个等前一个结束，即使中间隔着 HITL 暂停）。成员之间不互相通信，
   结果总是回给 leader；工具结果按 leader 的调用顺序落回其上下文。v2.0.10+ 某成员组
-  抛异常时先 join/取消同轮兄弟任务再结束该轮（异常保留向外抛，任务不泄漏）。
+  抛异常时先 join/取消同轮兄弟任务再结束该轮（异常保留向外抛，任务不泄漏）；v2.0.12+
+  成员执行失败（如成员模型调用抛错）时，先向 leader 补发一次 `UserInterruptEvent` 清掉其
+  挂起的 `TeamAssign` 调用再向外抛异常（leader 不再永久停在等待委派结果上）。
 - **结果映射**：成员最终回复的 `finished_reason` 映射为工具结果状态——
   `COMPLETED`/`EXCEED_MAX_ITERS` → SUCCESS（回复内容取 TextBlock/DataBlock，无内容时
   给占位提示）、`INTERRUPTED` → INTERRUPTED、`ERROR` → ERROR。

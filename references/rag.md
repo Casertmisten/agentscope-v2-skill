@@ -64,7 +64,7 @@ uv pip install "agentscope[mem0]"
 | `PDFParser` | `application/pdf` | 每页 1 个 Section（仅文本，不提取图片；pypdf 惰性读取失败同样抛文档化 `ValueError`，v2.0.10+） |
 | `PPTParser` | PPTX | 每张幻灯片 1 个 Section（组合形状内的文本同样读取，v2.0.8+；插入占位符的图片保留其内容，未填充占位符不算图片，v2.0.9+；文本框软换行规范化、延迟 XML 读取错误统一抛文档化 `ValueError`，v2.0.10+） |
 | `ImageParser` | 图像 | 整个文件为 1 个 Section(多模态) |
-| `WordParser`（v2.0.4+） | `.docx` | 按文档顺序,`separate_table=True` 时表格独立成 Section（单元格内嵌套表格的文本同样提取，v2.0.8+；缺路径/无效文档抛文档化错误，v2.0.9+；表格省略的首尾单元格以空串补齐，`w:gridBefore`/`w:gridAfter` 缺省列的网格位置不错位、表格单元格内嵌图片提取，v2.0.10+；文本框文本独立成行且只读一次——不再拼进所在句子中间、也不经 mc:Fallback 重复读取，块级内容控件 `w:sdt`（如自动目录）内的段落/表格不再漏读，空行判定修正——仅含空格/软换行的段落才算空行，v2.0.11+） |
+| `WordParser`（v2.0.4+） | `.docx` | 按文档顺序,`separate_table=True` 时表格独立成 Section（单元格内嵌套表格的文本同样提取，v2.0.8+；缺路径/无效文档抛文档化错误，v2.0.9+；表格省略的首尾单元格以空串补齐，`w:gridBefore`/`w:gridAfter` 缺省列的网格位置不错位、表格单元格内嵌图片提取，v2.0.10+；文本框文本独立成行且只读一次——不再拼进所在句子中间、也不经 mc:Fallback 重复读取，块级内容控件 `w:sdt`（如自动目录）内的段落/表格不再漏读，空行判定修正——仅含空格/软换行的段落才算空行，v2.0.11+；段落内 `w:tab` 保留为 `\t`、`w:br`（默认/textWrapping）与 `w:cr` 保留为 `\n`（分页/分栏符不产出文本），`w:del` 修订删除的内容跳过，文本框内多个段落各自换行，v2.0.12+） |
 | `ExcelParser`（v2.0.4+） | `.xlsx` / `.xls` | `separate_sheet=True` 时每个 sheet 一个 Section(含 `metadata={"sheet": name}`);默认合并为一个 Section。仅图片/仅表头的 sheet 也保留(图片成 DataBlock Section、表头成表格文本,v2.0.8+)；单元格文本保留原样（`"00123"`/`"NA"` 不被 pandas 类型推断与 NA 置换，v2.0.9+）；以 `header=None` 读表,首行按数据保留（重复表头不被 pandas 改名、空表头不变 "Unnamed: ..."，v2.0.10+）；原生错误单元格（`#N/A`/`#REF!` 等）保留原样不被清空（v2.0.10+）；worksheet 解析失败抛 `ValueError`（此前记 warning 跳过该 sheet，v2.0.11+） |
 
 Word/Excel Parser 针对表格场景增加配置:
@@ -173,7 +173,7 @@ store = MilvusLiteStore(
     metric_type="COSINE",          # 距离度量：COSINE / IP / L2
     index_type="AUTOINDEX",        # 索引类型，默认 AUTOINDEX
     client_kwargs=None,            # 透传给 pymilvus.MilvusClient 的额外参数
-    batch_size=256,                # 插入/检索批量大小
+    batch_size=256,                # 插入分批与 list_documents 分页大小（须 >0，v2.0.12+ 起 <=0 构造即抛 ValueError）
 )
 # 同样需用 async with 进出
 ```
@@ -223,6 +223,10 @@ store = MongoDBStore(
 > ℹ️ 检索的 `top_k` 上限为 10,000（MongoDB ANN 候选数硬限制,超出抛 `ValueError`）;
 > 内部 `numCandidates` 按 `min(10000, max(100, top_k × 20))` 计算并封顶（v2.0.11+
 > 起不再无上限增长）。
+>
+> ℹ️ v2.0.12+ `list_documents` / `list_chunks` 的 `metadata_filter` 值统一包成 `{"$eq": value}`
+> 按字面匹配（与 search/delete 一致）——dict 值如 `{"$ne": "alpha"}` 不再被当作查询操作符，
+> 列举接口无法借此绕过多租户过滤。
 
 三个 Store 的度量/过滤对比:
 

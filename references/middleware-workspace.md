@@ -13,6 +13,7 @@ from agentscope.middleware import (
     TTSMiddleware,
     ReplyBudgetControlMiddleware,
     ModelRouterMiddleware,
+    SteeringMiddleware,         # v2.0.12+ 运行中引导（另导出 SteeringQueue / SteeringSource 等）
     Mem0Middleware,
     ReMeMiddleware,
     AgenticMemoryMiddleware,
@@ -28,8 +29,9 @@ from agentscope.middleware import (
 |---|---|
 | `TracingMiddleware` | OpenTelemetry 追踪，在 reply/model/tool 三层创建 span（见下文） |
 | `TTSMiddleware` | 把 reasoning 文本转语音，注入 `DATA_BLOCK_*` 事件（见下文） |
-| `ReplyBudgetControlMiddleware` | 按 token 权重限制单次 reply 的消耗（达到预算时给智能体 hint）。v2.0.8+ 计数在 `ReplyStartEvent` 时重置，不依赖 `ReplyEndEvent` 清理——结束事件被外层中间件吞掉也不会 KeyError；v2.0.10+ 预算耗尽时若该 reply 尚欠结构化输出，hint 改为专用提示且 `tool_choice` 只开放结构化输出工具（不再一刀切禁工具导致结构化输出无法完成） |
+| `ReplyBudgetControlMiddleware` | 按 token 权重限制单次 reply 的消耗（达到预算时给智能体 hint）。v2.0.8+ 计数在 `ReplyStartEvent` 时重置，不依赖 `ReplyEndEvent` 清理——结束事件被外层中间件吞掉也不会 KeyError；v2.0.10+ 预算耗尽时若该 reply 尚欠结构化输出，hint 改为专用提示且 `tool_choice` 只开放结构化输出工具（不再一刀切禁工具导致结构化输出无法完成）；v2.0.12+ 上一 reply 注入的预算收尾 hint 在下一次 `ReplyStartEvent` 时自动从 context 移除（不再泄漏进后续 reply） |
 | `ModelRouterMiddleware`（v2.0.8+） | 按用户输入为每条回复选择 chat model 候选（分类器或结构化输出路由，见下文） |
+| `SteeringMiddleware`（v2.0.12+） | reply 进行中追加用户输入，在下一个推理边界以 HintBlock 注入、不打断模型/工具调用（见下文） |
 | `Mem0Middleware` | 基于 [mem0](https://github.com/mem0ai/mem0) 的长期记忆，跨会话记忆用户偏好 |
 | `ReMeMiddleware` | 内嵌 [ReMe](https://github.com/agentscope-ai/ReMe) 应用的长期记忆，自动写回并可工具检索 |
 | `AgenticMemoryMiddleware`（v2.0.4+） | 基于文件系统（Markdown）的长期记忆，由 Agent 自主读写记忆文件 |
@@ -248,6 +250,13 @@ agent = Agent(
 - **非实时 TTS**（`tts_model.realtime=False`）：在每个 `TextBlockEndEvent` 时把累计文本送入 `synthesize`，整段合成后输出。
 - **实时 TTS**（`tts_model.realtime=True`）：每个 `TextBlockDeltaEvent` 通过 `push` 推送，增量音频立即作为 `DataBlockDeltaEvent` 输出（每个 delta 携带增量 base64 PCM，按 `block_id` 串接得到完整音频）。
 - 每个 `DataBlockDeltaEvent.data` 是增量 base64 PCM 块；完整音频 = 所有同 `block_id` 的 delta 解码后拼接。
+- **容错（v2.0.12+）**：构造签名 `TTSMiddleware(tts_model, *, continue_on_error=False)`。默认 provider
+  失败照常抛出；`continue_on_error=True` 时初始化（进入 `async with`）/ 合成 / 清理任一阶段出错，
+  本条 reply 余下部分停用语音、文本照常输出，并产出 `CustomEvent(name="tts_error",
+  value={"reply_id": ..., "stage": "initialization" | "synthesis" | "cleanup"})`（已打开的音频 DataBlock
+  先补发 `DataBlockEndEvent`）。上游模型错误、消费方注入的错误与任务取消始终传播。服务化
+  `ChatService` 固定以 `continue_on_error=True` 挂载；session 的 TTS 配置失效时不挂 TTS，并向 session
+  事件流发布 `CustomEvent(name="tts_error", value={"stage": "configuration"})`。
 
 ### ModelRouterMiddleware — 按输入路由 chat model（v2.0.8+）
 
@@ -290,6 +299,50 @@ agent = Agent(name="Assistant", system_prompt="...", model=smart_model,
   不影响回复进行。
 - 传普通 `ChatModelBase` 当路由模型时，中间件构造 `{choice: enum}` 的 JSON schema
   用 `generate_structured_output` 完成选择。
+
+### SteeringMiddleware — 运行中引导（v2.0.12+）
+
+`SteeringMiddleware` 让调用方在 reply **进行中**追加用户输入（"顺便把单测也补上"），
+不打断正在进行的模型调用或工具执行：输入在下一个推理边界以 `HintBlock` 注入上下文，
+agent 在同一条 reply 内吸收并继续。进程内实现 `SteeringQueue` 与 agent 同事件循环使用：
+
+```python
+from agentscope.event import ReplyStartEvent
+from agentscope.message import UserMsg
+from agentscope.middleware import SteeringMiddleware, SteeringQueue
+
+queue = SteeringQueue()
+agent = Agent(name="Assistant", system_prompt="...", model=model,
+              middlewares=[SteeringMiddleware(queue)])
+
+receipt = None
+async for event in agent.reply_stream(UserMsg("user", "重构 parser 模块")):
+    if isinstance(event, ReplyStartEvent):
+        # submit 同步、不等待；须在 ReplyStartEvent 之后调用（此时输入窗口已打开）
+        receipt = queue.submit(
+            UserMsg("user", "顺便把单测也补上"),   # Msg 或非空 list[Msg]
+            session_id=agent.state.session_id,
+            reply_id=event.reply_id,
+        )
+print(await receipt.wait())   # "injected" / "unconsumed" / "failed"
+```
+
+- **注入时机**：每次 reasoning 前检查一次；模型给出纯文本终稿后（`cur_iter < max_iters`
+  时）再查一次——有新输入则压下该终稿、注入后让 agent 正常再迭代一轮（含压缩与预算）；
+  工具执行期间到达的输入等到下一次 reasoning 才注入。注入的 `HintBlock` 挂在本 reply 的
+  assistant 消息尾部（`source` 默认 `"steering"`，可经 `hint_source=` 改），同时发出
+  `HintBlockEvent`。
+- **回执**：`SteeringReceipt.wait()` 返回终态——`injected`（已进上下文）/ `unconsumed`
+  （reply 结束或挂起 HITL 时仍未消费，退还调用方，**不会**自动开启新一轮）/ `failed`
+  （消息含 TextBlock/DataBlock 以外的块等无法注入）；取消 `wait()` 不影响投递。
+  ⚠️ 不要在 `async for` 循环体内 `await receipt.wait()`——事件流不被消费 agent 就不会推进。
+- `submit` 在 reply 未开窗（未开始/已结束）或传空列表时抛 `ValueError`；`SteeringQueue`
+  非持久、非线程安全。自定义来源（如跨进程总线）继承 `SteeringSource`，实现
+  `read` / `acknowledge` / `reject`（`start_reply` / `finish_reply` 有默认空实现）；
+  `SteeringInput(id, messages)` 是一条带来源 id 的输入。
+- 服务化场景由 `ChatService` 自动给每个 agent 挂上总线版 `agentscope.app.middleware.SteeringMiddleware`
+  （`hint_source="chat_input_steering"`），前端经 `POST /chat/queue/{item_id}/steer` 把排队中的
+  输入改投给运行中的 reply，见下文「服务化聊天输入队列」。
 
 ### Mem0Middleware — mem0 长期记忆（v2.0.3+）
 
@@ -448,8 +501,12 @@ Agent **不该存什么**（代码结构、git 历史、临时任务状态等—
 |---|---|---|
 | `workdir` | （必填） | 工作目录根路径 |
 | `memory_dir` | `"Memory"` | 记忆文件子目录（`MEMORY.md` 索引也在其中） |
-| `parameters` | `None` | `Parameters` 配置（检索 top_k、注入上限等），`None` 用默认 |
+| `parameters` | `None` | `Parameters` 配置（`memory_max_tokens` / `memory_instructions` / `retrieval_async` / `retrieval_model` / `retrieval_max_tokens_per_md` / `retrieval_max_files` / `retrieval_max_tokens_per_frontmatter` 等；每次最多选 5 个相关文件为内置常量、不可配），`None` 用默认 |
 | `backend` | `None` | `BackendBase`；`None` 用 `LocalBackend`，也可传 docker/e2b 后端实现远程记忆存储 |
+
+> v2.0.12+：`retrieval_max_tokens_per_frontmatter`（默认 256）是每个记忆文件参与相关性筛选的
+> `type` + `description` **共享** token 预算（先保 type 再保 description）；frontmatter 被字节上限
+> 截断时读取窗口延伸到闭合的 `---` 再完整解析（此前长 frontmatter 会丢字段）。
 
 ### 中间件提供工具
 
@@ -931,6 +988,15 @@ await workspace.purge_agent(agent_id=agent_id)
 
 > 服务化路由的 Skill 端点（`/workspace/skills/...`）已自动带 `agent_id`。
 
+> v2.0.12+：`add_skill`（本地路径）与 `add_skill_archive`（归档流，即 `POST /workspace/skill/upload`
+> 底层）统一在落盘前校验 SKILL.md——YAML front matter 须可解析且 `name` / `description` 均非空，
+> 否则抛 `ValueError("Invalid skill at ...: missing or malformed SKILL.md (requires 'name' and
+> 'description' fields).")`，失败不留残余；workspace 扫描/安装/更新路径也都以 `utf-8-sig` 读
+> SKILL.md（带 BOM 的文件此前在这些路径会被判为缺字段而静默跳过）。同期删除了按**服务器本地路径**
+> 安装 skill 的 `POST /workspace/skill`（早已 deprecated，多主机部署下无意义）——改用
+> `POST /workspace/skill/upload` 或 `POST /workspace/skill/from-library`；SDK 的
+> `workspace.add_skill(path)` 不受影响。
+
 ### 与 Agent 集成
 
 ```python
@@ -975,6 +1041,7 @@ app = create_app(
     extra_middlewares=[MyFastAPIMiddleware()],   # FastAPI 中间件（如 CORS、限流）
     extra_agent_middlewares=my_middleware_factory,  # agent 中间件工厂
     extra_agent_tools=my_tool_factory,     # agent 工具工厂
+    tool_offload_timeout_secs=10.0,        # 慢工具转后台执行前的等待上限（秒，v2.0.12+）；None 关闭工具卸载
     custom_subagent_templates=[...],       # 子智能体模板（v2.0.2+）
     custom_agent_cls=MyAgent,              # 自定义 Agent 子类（v2.0.2+）
     resource_access_policy=None,           # 跨用户资源共享策略（v2.0.4+）
@@ -998,7 +1065,7 @@ root.mount("/agentscope", app)
 > ⚠️ 当前签名中 `storage` / `message_bus` / `workspace_manager` / `knowledge_base_manager` /
 > `knowledge_parsers` / `knowledge_chunkers` / `blob_store` / `enable_index_worker` / `mcp_hubs` /
 > `skill_hubs` 位于 `*` 之前（可按位置传参）；`enable_channel_worker` / `enable_scheduler` /
-> `extra_*` / `custom_*` / `channels` / `resource_access_policy` / `download_secret` /
+> `extra_*` / `tool_offload_timeout_secs` / `custom_*` / `channels` / `resource_access_policy` / `download_secret` /
 > `realtime_ice_servers` / `title` / `version` 均为**仅关键字参数**。推荐全部用关键字传参。
 > 旧参数名 `knowledge_chunker`（传实例）已 deprecated，传入仅取其类并告警，请改用 `knowledge_chunkers`。
 >
@@ -1074,7 +1141,12 @@ bus = InMemoryMessageBus()
 
 - `RedisMessageBus` —— 生产环境、多 worker 部署必选。
 - `InMemoryMessageBus`（v2.0.3+）—— 单进程部署的轻量选项，无需 Redis，适合本地开发与测试。**不支持多进程**；`try_lock` 自 v2.0.8+ 起按 `ttl_secs` 过期租约（与 Redis `SET NX EX` 同语义，持锁者崩溃不再永久阻塞 key）。
-- `MessageBus` —— 上述两者的抽象基类，可自行子类化实现自定义后端。
+- `MessageBus` —— 上述两者的抽象基类，可自行子类化实现自定义后端。v2.0.12+ 新增的
+  `queue_read(key, max_count=100)` / `queue_replace(key, payloads)`（可编辑聊天队列所需）是
+  **带默认实现的普通方法**（默认抛 `NotImplementedError("This bus does not support editable queues.")`），
+  不是抽象方法——已有自定义 bus 不会被破坏，但要支持服务化聊天输入队列需自行覆盖；
+  内置两种 bus 均已实现。同期新增的 `acquire_lock_bounded(key, *, ttl_secs=600, timeout_secs=2.0)`
+  （限时取锁，超时抛 `TimeoutError`）与 `registry_get_many` 也带默认实现。
 
 > ℹ️ MessageBus 属于服务化层基础设施，普通 agent 开发者无需直接使用——由 `create_app` 启动的 FastAPI 服务在内部持有并调用。
 
@@ -1082,7 +1154,7 @@ bus = InMemoryMessageBus()
 
 `create_app` 的 `storage` 参数决定服务化的持久化后端（credentials / agents / sessions / 会话消息 /
 schedules / teams / knowledge bases / knowledge documents / MCP·Skill 用户库 / channels /
-SOPs / SOP runs 共 12 类记录）。两种实现：
+SOPs / SOP runs / voice profiles（v2.0.12+）共 13 类记录）。两种实现：
 
 ```python
 from agentscope.app.storage import RedisStorage, AsyncSQLAlchemyStorage
@@ -1107,19 +1179,28 @@ storage = AsyncSQLAlchemyStorage(
 - 频道记录同样落库（v2.0.7+，`channels` 表 + Alembic 迁移 `0003`）：bot 唯一性用
   `platform_bot_id` 列上的 UNIQUE 约束保证，与 Redis 后端能力对齐。
 - SOP 过程与运行记录落库（v2.0.9+，`sops` / `sop_runs` 表 + Alembic 迁移 `0004`）。
+- 音色档案落库（v2.0.12+，`voice_profiles` 表 + Alembic 迁移 `0005_voice_profiles`；upsert 不允许跨用户覆写）；
+  同期修复数据库 URL 含 `%`（如百分号编码的密码）时 Alembic 迁移报 ConfigParser 错误。
 - 附带 Alembic 迁移脚手架（`app/storage/_sql/_alembic/`），`auto_migrate=True` 时自动 `alembic upgrade head`。
 
 > ℹ️ `StorageBase` 是两者的抽象基类，可自行子类化。普通 agent 开发者无需直接操作 storage——
 > 由 `create_app` 启动的 FastAPI 服务在内部持有。
+>
+> ⚠️ v2.0.12+ `StorageBase` 新增 4 个**抽象方法**：`upsert_voice_profile(user_id, record) -> str` /
+> `get_voice_profile(user_id, profile_id)` / `list_voice_profiles(user_id)` /
+> `delete_voice_profile(user_id, profile_id) -> bool`——自定义 Storage 子类不实现会在实例化时报
+> `TypeError`（内置 Redis / SQL 后端均已实现）。
 
 ### 内置路由
 
 - `agent_router` — 智能体管理
-- `chat_router` — 对话（REST + SSE）
+- `chat_router` — 对话（REST + SSE；v2.0.12+ 含可编辑聊天输入队列 `/chat/queue*`，见下文）
 - `credential_router` — 凭据管理
 - `model_router` — 模型配置
 - `embedding_model_router` — 列出某 credential 类型下可用 embedding 模型（`GET /embedding-model/`，v2.0.5+）
 - `tts_model_router` — TTS 模型配置（v2.0.2+）
+- `voice_profile_router` — 音色档案与语音复刻（`/voice-profile`，v2.0.12+，见下文）
+- `asr_router` — 语音转写模型发现与浏览器语音输入（`/asr-model/`、`/asr/*`，v2.0.12+，见下文）
 - `schedule_router` — 定时任务
 - `session_router` — 会话管理
 - `workspace_router` — 工作区操作（含产物文件读取，v2.0.6+）
@@ -1130,6 +1211,29 @@ storage = AsyncSQLAlchemyStorage(
 - `sop_router` — SOP 标准作业程序管理与运行（`/sops`，v2.0.9+）
 - `realtime_router` — 实时语音模型发现与浏览器 WebRTC 协商（`/realtime`，v2.0.10+）
 - `health_router` — `/health` 健康检查（v2.0.6+）
+
+### 服务化聊天输入队列与 steering（v2.0.12+）
+
+`POST /chat/` 对普通用户输入（`Msg | list[Msg]`）不再立即启动，而是进入**每 session 一条的
+服务端 FIFO 队列**，session 空闲时由唤醒调度按序出队执行：响应 `ChatTriggerResponse.status`
+由恒为 `"started"` 改为 `"started" | "queued"`——普通输入返回 `"queued"` + 新字段
+`queue_item_id`；HITL 恢复事件（确认/外部执行结果）与 `None` 续跑仍直接 `"started"`。
+上限：每 session 100 条待处理、每用户合计 500 条（超出 429；队列忙 503）。出队前可编辑：
+
+| 端点 | 用途 |
+|---|---|
+| `GET /chat/queue?agent_id=&session_id=` | 列出待处理项 → `ChatQueueResponse{items: [ChatQueueItem]}` |
+| `PATCH /chat/queue/{item_id}` | body `{agent_id, session_id, input}` 替换该项输入（已开始的项 409） |
+| `DELETE /chat/queue/{item_id}?agent_id=&session_id=` | 删除待处理项 |
+| `PATCH /chat/queue/order` | body `{agent_id, session_id, item_ids}` 重排（`item_ids` 须是当前全部待处理 id 的精确排列，拒绝过期快照） |
+| `POST /chat/queue/{item_id}/steer` | body `{agent_id, session_id, reply_id}` 把该项改投给**正在运行**的 reply（steering，见上文 SteeringMiddleware；reply 已过期或项已开始 409） |
+
+- `ChatQueueItem` 字段：`id` / `created_at` / `input` / `state`（`"queued" | "steering" | "failed"`）/
+  `error`（steering 失败原因）；steering 中的项若 reply 结束仍未注入，回退为 `queued` 等正常出队。
+- 事件流新增 `CustomEvent` 通知：`chat_input_started`（排队项开始执行）/ `chat_input_failed` /
+  `chat_input_cancelled` / `chat_queue_changed`（队列快照变化）/ `chat_input_injected` /
+  `chat_input_steer_failed`（steering 结果）。
+- 自定义 `MessageBus` 须覆盖 `queue_read` / `queue_replace` 才支持该队列（见上文「消息总线」）。
 
 ### /health 健康检查端点（v2.0.6+）
 
@@ -1191,6 +1295,63 @@ storage = AsyncSQLAlchemyStorage(
 定时任务默认开始时间锚定为带时区的绝对时刻；被拒 chat run 的协程不再悬挂；
 Redis 订阅清理不受任务取消影响；Docker workspace 初始化失败清理半成品；
 OpenSandbox 未设置的 exit code 按失败处理；workspace skill 删除幂等。
+
+### 服务化语音输入 /asr（v2.0.12+）
+
+浏览器语音输入（转写成文字后再作为普通消息发送），模型侧见 [models.md](models.md) 的 ASR 小节：
+
+| 端点 | 用途 |
+|---|---|
+| `GET /asr-model/?provider=<credential 类型>` | 列出该 provider 的批式与实时 ASR 模型卡 → `{models, total}`（未注册 provider 404） |
+| `POST /asr/transcriptions` | multipart：`file` / `credential_id` / `model` / `parameters`（JSON 字符串，默认 `"{}"`），仅批式模型 → `{text}`；文件 > 25 MiB 返回 413，空文件或参数非法 400 |
+| `POST /asr/realtime/token` | body `{credential_id, model}` → `{token, expires_at}`：以 `download_secret` HMAC 签名、绑定用户与 credential+model 作用域、有效 60s |
+| `WS /asr/realtime?token=...` | 首帧 `{"type": "start", credential_id, model, parameters, sample_rate}`，随后二进制 PCM16 帧，最后 `{"type": "stop"}`；服务端回 `ready` / `transcript{text, is_last}` / `error{detail}` JSON 帧（鉴权失败关闭码 1008、其他错误 1011、正常 1000） |
+
+- Session 新增 `asr_model_config: ASRModelConfig(type, credential_id, model, parameters)`
+  （`SessionConfig` / 创建 / 更新请求均有；PATCH 不传保留、传 null 清空），供前端选择语音输入
+  模型——服务端只校验 credential 可见性。`ASRModelConfig` 自 `agentscope.app.storage` 导出。
+
+### 音色档案与语音复刻 /voice-profile（v2.0.12+）
+
+把复刻出的音色保存为用户私有的**音色档案**，session 的 TTS 配置引用档案即可使用（SDK 侧
+语音复刻见 [models.md](models.md)）：
+
+| 端点 | 用途 |
+|---|---|
+| `GET /voice-profile/available-engines` | 列出当前用户**自有** credential 可用的引擎（`cosyvoice` / `dashscope_tts` / `openai_tts` / `gemini_tts`）及模型卡、是否支持复刻 |
+| `GET /voice-profile/` · `GET /voice-profile/{id}` | 列表 `{profiles, total}` / 单个（不存在 404） |
+| `POST /voice-profile/` · `PATCH /{id}` · `DELETE /{id}` | body `{data: VoiceProfileData}` 创建（201 `{profile_id}`，同名 409）/ 更新 / 删除（204） |
+| `POST /voice-profile/openai-consent` | 上传 OpenAI 说话人授权录音（`audio_base64`、`language` 等）→ `{consent_id}` |
+| `POST /voice-profile/clone` | body `{engine, credential_id, model, audio_base64 \| audio_url, ...}` 调 provider 复刻 → `{voice_id, credential_id}`（**不自动建档**） |
+
+- 只接受用户自有 credential（共享的 403）；音频解码后 ≤ 10 MiB（否则 413）；模型卡
+  `voice_cloning=false` 或 `gemini_tts` 引擎复刻返回 400；SDK `ValueError` → 400、`VoiceCloningError` → 502。
+- `VoiceProfileData(name, engine, model, credential_id, voice, metadata)` / `VoiceProfileRecord`
+  自 `agentscope.app.storage` 导出；保存时 engine / credential_id / model / voice 必须非空。
+- Session `TTSModelConfig` 新增 `voice_profile_id`：创建/PATCH session 时做完整校验——credential
+  类型须与 `type` 一致、参数通过对应 TTS 类 `Parameters` 校验；只能用复刻音色的模型（如
+  `cosyvoice-v3.5-*`）必须绑定档案；绑定档案时 credential / type / model / voice 须与档案一致。
+  运行时每轮按最新档案覆盖这些字段（OpenAI 非预置音色自动包成 `{"id": voice}`）。
+
+### 定时任务 schedule_router（`/schedule`）
+
+`POST /schedule/` 的 `CreateScheduleRequest` 主要字段：`name` / `description` / `cron_expression` /
+`timezone`（默认 `"UTC"`）/ `agent_id` / `chat_model_config` / `enabled` / `stateful` / `permission_mode`
+（默认 `DONT_ASK`），以及 v2.0.12+ 起真正生效的 `started_at` / `ended_at`：
+
+- `started_at` / `ended_at`：`AwareDatetime | None`，**必须带 UTC 偏移**（如 `"2026-11-01T20:26:00+08:00"`，
+  naive 时间或非法格式 422），均为闭区间端点；`started_at` 省略取创建时刻，`ended_at` 省略表示不结束；
+  `ended_at <= started_at` 返回 422。此前请求模型没有这两个字段、传入被静默忽略。
+  `PATCH /schedule/{id}` 仍不支持修改起止时间。
+- cron 的日（day-of-month）与周（day-of-week）**两字段都受限**（都不含 `*`）时按标准 cron 取**并集**
+  （v2.0.12+）：`0 9 1 * 1` = 每月 1 号 09:00 **或**每周一 09:00（重合只触发一次）；任一字段含 `*`
+  （包括 `*/2`）仍取交集。此前一律取交集。REST 与 agent 工具创建的定时任务都受影响。
+
+服务化运行期其他 v2.0.12 修复：定时任务 reconcile 串行化（并发时旧快照不再复活已删除/禁用的任务）；
+删除 session / SOP run 前先校验归属（不再先取消他人的 run）；知识库删除失败时保留源 blob、文档
+注册被取消时清理已上传的 blob；`POST /agents` / `PATCH /agents/{id}` 写入时校验 context 比例
+（`reserve_ratio < trigger_ratio`，启用运行时注入时 `context_buffer_ratio < trigger_ratio`），违规
+422——存量非法记录仍可读取修复。
 
 ### workspace 产物文件读取与状态端点（v2.0.6+）
 

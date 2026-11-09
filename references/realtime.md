@@ -76,7 +76,10 @@ agent = RealtimeAgent(
 - 换新 transport 再次调用即可续接同一模型会话；
 - 同一 agent 同时只允许一个活跃的 `reply_stream`（再调用抛 `RuntimeError`）；
 - 提前 `break` 不会立即清理，需要即时清理时用 `contextlib.aclosing` 包住生成器；
-- transport 与模型的输入/输出采样率必须一致，重采样是 transport 的职责（agent 原样转发）。
+- transport 与模型的输入/输出采样率必须一致，重采样是 transport 的职责（agent 原样转发）；
+- v2.0.12+ 流结束（正常结束/提前关闭/取消）时丢弃"尚未绑定 provider item id 且用户还没说完"的本地
+  用户话轮，避免它们抢走下一次 `reply_stream` 的首条转写；已绑定或已说完的话轮保留，迟到的转写
+  仍落到原 reply。
 
 ### TurnAggregator / TurnMetrics
 

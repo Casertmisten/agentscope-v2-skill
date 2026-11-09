@@ -25,7 +25,7 @@ from agentscope.permission import (
 | 模式 | 行为 | 适用场景 |
 |---|---|---|
 | `DEFAULT` | 默认需确认，但**只读调用自动放行**（v2.0.4.post1+，`tool.check_read_only()` 返回 True 的工具/命令，如 `ls`/`git status`/Read/Glob/Grep）；其余按 deny→ask→allow 规则匹配，未命中则 ASK | 默认模式，最安全 |
-| `ACCEPT_EDITS` | 自动放行工作目录内的文件读写、文件系统命令（mkdir/rm/mv/cp 等，要求所有目标路径都在工作目录内），其余按规则 | 用户在场，快速迭代开发 |
+| `ACCEPT_EDITS` | 自动放行工作目录内的文件读写、文件系统命令（mkdir/rm/mv/cp 等，要求所有目标路径都在工作目录内；v2.0.12+ 复合命令须**每个子命令**都是文件系统命令），其余按规则 | 用户在场，快速迭代开发 |
 | `EXPLORE` | 只读模式：允许只读工具和只读 bash 命令，拒绝一切修改；**用户配置的 DENY/ASK 规则优先于只读自动放行** | 探索代码库 |
 | `BYPASS` | 跳过所有检查（**包括安全 ASK**，如 `rm -rf /`、写 `~/.bashrc`），仅用户 deny/ask 规则和工具自身 DENY 生效 | 完全可信的沙箱环境 |
 | `DONT_ASK` | **ACCEPT_EDITS 的无人值守对应版**（v2.0.4.post1+ 行为升级）：只读调用 + 工作目录内编辑自动放行，其余本应弹窗的 ASK（含安全 ASK）一律转 DENY；**保证永不返回 ASK** | 定时任务、后台执行等用户不在场的场景 |
@@ -91,6 +91,13 @@ PermissionRule(
 )
 ```
 
+> ℹ️ **v2.0.12+ 复合命令按子命令匹配规则**：引擎先经 `tool.get_permission_inputs(tool_input)`
+> 把一次调用拆成可独立授权的操作（Bash 按 `&&` / `||` / `;` / `|` / 换行 / 后台 `&` 拆成子命令），
+> 再逐个匹配——**deny/ask 规则任一子命令命中即生效**；**allow 规则须覆盖每个子命令**（可由多条
+> 规则联合覆盖，如 `git *` + `npm *` 放行 `git status && npm install`），任一子命令未被覆盖则
+> 不放行、继续走 ASK。此前按整条命令字符串匹配，`git *` 会连带放行 `git status && rm -rf x`。
+> 注入/危险命令等安全检查仍针对完整原始命令；命令解析失败时不再生成宽泛的 allow 建议规则。
+
 ### 权限流程
 
 ```
@@ -145,13 +152,18 @@ class MyTool(ToolBase):
     async def generate_suggestions(self, tool_input) -> list[PermissionRule]:
         # 生成建议的权限规则（显示给用户）（async）
         ...
+
+    def get_permission_inputs(self, tool_input) -> list[dict]:
+        # v2.0.12+：返回需各自被规则覆盖的操作列表（不得为空），默认 [tool_input]；
+        # 仅"一次调用含多个可独立授权操作"的复合型工具需覆写（如 Bash 拆子命令）
+        return [tool_input]
 ```
 
 ## 内置工具的权限
 
 内置工具（Bash、Read、Write、Edit、Glob、Grep）都有完善的权限检查：
 
-- **Bash** — 命令模式匹配，只读命令（`ls`/`git status` 等）在各模式自动放行；工作目录内文件系统命令（`mkdir`/`rm`/`mv`/`cp` 等，要求所有目标路径都在工作目录内）在 `ACCEPT_EDITS` 和 `DONT_ASK` 模式自动放行；v2.0.5+ 起含注入风险（命令替换/控制流，如 `ls $(rm -rf /)`）的命令**不再判为只读**，会走 bypass-immune 的安全 ASK；`find . -delete`/`-exec`/`-ok` 等会改文件的 find 谓词也不再当只读放行；v2.0.8+ 起 `tee`（会写文件）同样移出只读白名单，sed 的 `-e`/`--expression` 逐表达式过 denylist、`--选项=值` 内联形式拆开解析、`--file`（-f）拒绝；v2.0.9+ 起 git 子命令的破坏性参数（`git grep -O<cmd>` 运行命令、`--output=<file>` 写文件等）不再判只读，sed 组合短标志中附着的选项值（`-ne'5p'`/`-e's/a/b/'`/`-i.bak`）也拆开过 denylist
+- **Bash** — 命令模式匹配，只读命令（`ls`/`git status` 等）在各模式自动放行；工作目录内文件系统命令（`mkdir`/`rm`/`mv`/`cp` 等，要求所有目标路径都在工作目录内）在 `ACCEPT_EDITS` 和 `DONT_ASK` 模式自动放行；v2.0.5+ 起含注入风险（命令替换/控制流，如 `ls $(rm -rf /)`）的命令**不再判为只读**，会走 bypass-immune 的安全 ASK；`find . -delete`/`-exec`/`-ok` 等会改文件的 find 谓词也不再当只读放行；v2.0.8+ 起 `tee`（会写文件）同样移出只读白名单，sed 的 `-e`/`--expression` 逐表达式过 denylist、`--选项=值` 内联形式拆开解析、`--file`（-f）拒绝；v2.0.9+ 起 git 子命令的破坏性参数（`git grep -O<cmd>` 运行命令、`--output=<file>` 写文件等）不再判只读，sed 组合短标志中附着的选项值（`-ne'5p'`/`-e's/a/b/'`/`-i.bak`）也拆开过 denylist；v2.0.12+ 起权限规则按子命令匹配（见上文 PermissionRule 说明），只读判定改为整体解析后按同一边界拆分（换行与后台 `&` 分隔的子命令同样必须全部只读，解析失败保守判非只读），`ACCEPT_EDITS`/`DONT_ASK` 的文件系统命令自动放行要求**每个子命令**的首词都属于 `mkdir`/`touch`/`rm`/`rmdir`/`mv`/`cp`/`sed` 且全部目标路径（含输出重定向）在工作目录内——此前只看首个词，`touch ./a && curl ... | sh` 会被搭便车放行
 - **Read/Write/Edit** — 文件路径模式匹配，敏感文件保护，`ACCEPT_EDITS`/`DONT_ASK` 模式下自动允许工作目录操作；v2.0.9+ 起 Edit/Write 落盘后自动刷新文件读缓存（一次 Read 后连续 Edit 不再要求重新读取）
 - **Glob/Grep** — 搜索路径匹配，只读在各模式自动放行，`EXPLORE` 模式下更是全部放行
 

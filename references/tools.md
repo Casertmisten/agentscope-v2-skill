@@ -29,6 +29,7 @@ async def match_rule(rule_content, tool_input) -> bool
 async def generate_suggestions(tool_input) -> list[PermissionRule]
 async def check_read_only(tool_input) -> bool   # EXPLORE 模式下用于判断是否只读
 async def check_external_result(result) -> None  # 外部工具：校验回传结果的 metadata（v2.0.8+）
+def get_permission_inputs(tool_input) -> list[dict]  # v2.0.12+：拆成需各自被权限规则覆盖的操作，默认 [tool_input]（Bash 按子命令拆，见 permissions.md）
 ```
 
 > v2.0.3 起，工具逻辑应重写 `call()`（而非 `__call__`）。`__call__` 已变为门面：它负责按
@@ -59,10 +60,16 @@ toolkit = Toolkit(tools=[Bash(), Read(), Write(), Edit()])
 > sed 备份后缀（`-i .bak`）识别为后缀；危险路径检查前先解析符号链接，本地
 > `unlink` 符号链接不跟随目标。
 
+> ℹ️ 内置工具 v2.0.12+ 行为：`Read` 运行时校验 `offset >= 1`、`1 <= limit <= 2000`（绕过 schema
+> 校验的直调路径不再静默读全文件），非法时返回 `ERROR` 状态结果；非 UTF-8 文件 `Read` 以 U+FFFD
+> 替换非法字节显示并附说明，且**不写入读缓存**，`Edit` 改为严格 UTF-8 解码、拒绝修改此类文件
+> （返回 `Error reading file: ...`，此前会被 U+FFFD 有损重写整个文件）；`Write` 落盘失败返回
+> `Error writing file: ...` 的 `ERROR` 结果而非抛异常（模型可见并重试）。
+
 ### PowerShell 工具（v2.0.5+，Windows）
 
 `PowerShell` 是与 `Bash` 平级的 `ToolBase` 子类，用于 Windows 环境。探针优先 `pwsh` 后
-`powershell.exe`，用 `-EncodedCommand`（UTF-16-LE base64）规避引号转义问题，会话状态不跨命令保留。
+`powershell.exe`（v2.0.12+ 探针须 exit 0 才采用，超时/异常退出的候选被跳过），用 `-EncodedCommand`（UTF-16-LE base64）规避引号转义问题，会话状态不跨命令保留。
 `check_permissions` 恒返回 `ASK`（保守策略，不建议 allow 规则）。
 
 ```python
@@ -261,6 +268,12 @@ ToolResponse(
 
 > ℹ️ 流式累积时，`ToolResponse` 的状态按后到的 chunk 更新（`RUNNING` → `SUCCESS`/`INTERRUPTED`/`DENIED`/`ERROR`）。
 > 但 **`ERROR` 是终态优先级最高**：一旦进入 `ERROR`，后续的 `INTERRUPTED` / `DENIED` chunk 不会再覆盖它（v2.0.6+ 修复）。
+>
+> ℹ️ 内容累积规则（`ToolResponse.append_chunk`，v2.0.12+）：只有 `Base64Source` 的 DataBlock 按 `id`
+> 续接（base64 按字节合并、留在首次出现的位置，`name`/`media_type` 取后到的非空值）；TextBlock 与
+> `URLSource` 的 DataBlock 一律按到达顺序追加、不按 id 合并，最后再合并相邻 TextBlock。此前同 id 的
+> URL 块抛 `ValueError`、不相邻的同 id 文本块会被合并打乱顺序。**流式媒体分片须用 Base64Source 且
+> 沿用同一个 id**。累积结果与 Agent 事件回放出的 `Msg` 一致。
 
 ### 工具结果中的多模态数据
 
