@@ -78,7 +78,9 @@ HintBlock(hint="给 LLM 的提示指令")
 > v2.0.12+：`*MultiAgentFormatter` 不再丢弃 assistant 消息组里的 HintBlock（此前只处理 Text/Data，
 > 运行时注入的时间/任务/压缩预警、RAG static 等 hint 在多智能体格式化器下可能到不了模型）——
 > 消息组在每个 HintBlock 处切开：hint 单独成一条与对应 ChatFormatter 输出一致的 user 消息，
-> 前后历史各成一条 `<history>…</history>` user 消息（`conversation_history_prompt` 只加在第一段）。
+> 前后历史各成一条 `<history>…</history>` user 消息（`conversation_history_prompt` 只加在
+> **第一个有文本内容**的历史段——Ollama 的图片-only 历史段不消耗该一次性槽位，且图片-only
+> 消息本身不再被整体丢弃）。
 
 ### DataBlock（替代 v1 的 Image/Audio/Video Block）
 ```python
@@ -154,6 +156,10 @@ ToolResultBlock(
     state=ToolResultState.SUCCESS,  # success/error/interrupted/denied/running
 )
 ```
+
+> v2.0.12+：Anthropic formatter 对 `state=ERROR` 的工具结果在 tool_result 内容块附带
+> `is_error: true`（出站方向；入站方向 `is_error` → `ToolResultState.ERROR` 早已支持），
+> 转发历史时错误状态不再被抹掉。
 
 ## Msg 实用方法
 

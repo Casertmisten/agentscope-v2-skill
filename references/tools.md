@@ -52,6 +52,9 @@ toolkit = Toolkit(tools=[Bash(), Read(), Write(), Edit()])
 > `head_limit`/`offset` 分页，且输出按路径排序（v2.0.8+），翻页顺序稳定。
 > v2.0.10+：glob 参数值形似选项时按字面值匹配（如 `pattern="-foo"` 不再被当成
 > 选项），含 `./` 当前目录段的模式正确处理。
+> v2.0.12+：`Glob` 外部 helper 输出非法（非 JSON 字符串数组）时返回 `ERROR` 结果
+> 而非误导性的空结果；`Grep` 空行是合法匹配记录、多行匹配文本与文件内容逐字一致
+> （可直接作 `Edit` 的 `old_string`）。
 
 > ℹ️ 内置工具其他 v2.0.10 行为：`Write` 写入路径的父目录由 backend 自动创建
 > （写到不存在的目录不再报错）；`Read` 未显式传 `model_input_types` 时每实例
@@ -266,6 +269,10 @@ ToolResponse(
 - `AsyncGenerator[ToolChunk]`（流式）
 - `Generator[ToolChunk]`（同步流式）
 
+> ℹ️ `metadata` 的框架约定保留键：MCP 工具进度流的 `mcp_progress`（见下文「MCP 工具进度流」）
+> 与服务化工具卸载占位符的 `background_task_id` / `tool_name` / `tool_state` / `offloaded_at`
+> （v2.0.12+，见 [middleware-workspace.md](middleware-workspace.md)「后台任务查询」）。
+
 > ℹ️ 流式累积时，`ToolResponse` 的状态按后到的 chunk 更新（`RUNNING` → `SUCCESS`/`INTERRUPTED`/`DENIED`/`ERROR`）。
 > 但 **`ERROR` 是终态优先级最高**：一旦进入 `ERROR`，后续的 `INTERRUPTED` / `DENIED` chunk 不会再覆盖它（v2.0.6+ 修复）。
 >
@@ -405,7 +412,12 @@ raw = await client.list_raw_tools() # 获取原始 mcp.types.Tool
 
 > v2.0.6+：有状态客户端支持重连——`connect() → close() → connect()` 会重建底层 transport
 > （stdio / streamable HTTP / SSE 均为一次性 context manager，每次连接前重建），断线后可复用
-> 同一 `MCPClient` 实例重新 `connect()`。
+> 同一 `MCPClient` 实例重新 `connect()`；连接握手进行中再次 `connect()` 抛 `RuntimeError`
+> （v2.0.12+，须串行连接）。
+>
+> ℹ️ 工具目录按客户端缓存：收到服务端 `tools/list_changed` 通知即失效，下一次
+> `get_tool`/`list_tools` 自动重新拉取（v2.0.12+，调用方无需干预；此前后台增删工具
+> 客户端一直用旧 schema）。极少数 discovery 与通知连续竞态会抛 `RuntimeError`，重试即可。
 
 ### 运行时 headers（v2.0.8+）
 
@@ -435,6 +447,10 @@ MCPClient(
     execution_timeout=30.0,                          # 超时秒数
 )
 ```
+
+过滤仅作用于 `list_tools()` 的展示与 agent 可见 schema；`get_tool(name)` 按名直查
+**全量**目录，可命中被过滤掉的工具（v2.0.12+）。`HttpMCPConfig.timeout`（HTTP 请求
+超时，默认 30.0）须为正数或 `None`，否则构造抛 pydantic `ValidationError`（v2.0.12+）。
 
 ### 结构化结果
 

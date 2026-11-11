@@ -25,7 +25,9 @@ RedisMessageBus / InMemoryMessageBus / Session Status 端点（含 list_sessions
 AsyncSQLAlchemyStorage 持久化 / /health 健康检查端点 / workspace 文件读取与状态端点（WorkspaceService +
 DirectoryListing + WorkspaceStatus/GitStatus + session cwd 工作目录）/ extra_agent_middlewares 工厂 workspace 参数 /
 Anthropic thinking_mode 推理控制 / Channel IM 频道接入钉钉、飞书与 Discord / Skill 按 agent 分区隔离 / 服务化实时语音
-/realtime 端点：浏览器 WebRTC offer/answer 接 RealtimeAgent（v2.0.10+）/ 可编辑服务端聊天输入队列 + steering 改投 /
+/realtime 端点：浏览器 WebRTC offer/answer 接 RealtimeAgent（v2.0.10+，v2.0.12+ 起 gpt-live-1 全双工 +
+Chat 委托）/ 可编辑服务端聊天输入队列 + steering 改投 / /background-tasks 后台任务只读查询 + 工具卸载
+占位符结构化 metadata（v2.0.12+）/
 /asr 浏览器语音输入 / /voice-profile 音色档案（v2.0.12+））、Agent 中断（UserInterruptEvent）、
 回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR）、跨用户资源共享（ResourceAccessPolicy 抽象）、
 Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 workspace）、
@@ -38,7 +40,8 @@ SOP 标准作业程序（agentscope.sop：SOP/SOPStep/SOPEngine 固定里程碑�
 A2A 协议远程智能体（A2AAgent 客户端适配器 + A2AAgentState，连接任意 A2A 1.0 服务）、
 实时语音智能体（RealtimeAgent 双向音频流 + agentscope.realtime 模块：DashScopeRealtimeModel Qwen-Omni /
 DashScopeAudioRealtimeModel Qwen-Audio / OpenAIRealtimeModel GPT Realtime / GeminiRealtimeModel Live API /
-XAIRealtimeModel Grok Voice 五路适配器 + RealtimeModelCard + Transport Frame 传输（AudioFrame/ControlFrame）+
+XAIRealtimeModel Grok Voice / OpenAILiveModel GPT-Live（全双工 + delegation_agent_factory 委托普通 ChatAgent
+执行深度任务、工具经委托后端，v2.0.12+）六路适配器 + RealtimeModelCard + Transport Frame 传输（AudioFrame/ControlFrame）+
 VAD 话轮检测 + TurnAggregator/TurnMetrics + send() 离散输入入口，v2.0.8+；新增 Qwen3.8 Omni Realtime /
 Qwen-Audio 3.1 Realtime 模型卡与服务层浏览器 WebRTC 语音端点，v2.0.10+）、VolcengineChatModel 火山引擎豆包模型
 （VolcengineCredential + thinking_enable/reasoning_effort，v2.0.8+）、分类器模型 agentscope.classifier
@@ -139,7 +142,8 @@ RAG 检索分数统一 higher-is-better（距离度量的后端返回取负后�
 实时语音智能体（`agentscope.realtime` 模块 + `RealtimeAgent`：双向音频流、五路 provider 适配器
 DashScope Qwen-Omni/Qwen-Audio、OpenAI GPT Realtime、Gemini Live、xAI Grok Voice，
 LocalAudioTransport 传输、可选 VAD 话轮检测、断线自动重连、`TurnAggregator`/`TurnMetrics`，
-工具调用与 HITL 确认复用 Agent 事件体系，v2.0.8+）、
+工具调用与 HITL 确认复用 Agent 事件体系，v2.0.8+；v2.0.12+ 增至六路——`OpenAILiveModel`
+GPT-Live 全双工 + Chat Agent 委托）、
 火山引擎豆包模型（`VolcengineChatModel` + `VolcengineCredential`，`thinking_enable`/`reasoning_effort`
 思考参数，v2.0.8+）、
 MiniMax 模型（v2.0.9+）：`MiniMaxCredential`（默认国际站 `api.minimax.io/anthropic`，国内换
@@ -260,10 +264,12 @@ provider 拒答返回新答案类型 `RefusalAnswer`——单题拒答不影响�
 Credential 新增 `get_realtime_model_classes()` / `list_realtime_models()`（与 chat/embedding/tts
 同构的 realtime 模型发现入口，v2.0.10+）、
 RealtimeAgent 传输层 Frame 化（`TransportBase.incoming()` 产出 `TransportFrame` =
-`AudioFrame` | `ControlFrame`，`ControlFrameType` 三值 TEXT/USER_CONFIRM/INTERRUPT 分别对应
+`AudioFrame` | `ControlFrame`，`ControlFrameType` 四值 TEXT/USER_CONFIRM/INTERRUPT/
+EXTERNAL_EXECUTION_RESULT（第四值 v2.0.12+，委托任务外部执行结果）分别对应
 `send()` 文本轮 / 权限确认 / 中断三个公共方法，远端浏览器与 Python 调用方走同一语义路径；
 播放侧 `send_audio(pcm, item_id)` / `clear_audio()`（返回打断前 `PlayoutPosition`）/ `playout()`；
-`send(inputs)` 是非音频输入唯一入口（str/Msg 文本轮、`UserConfirmResultEvent`、`UserInterruptEvent`，
+`send(inputs)` 是非音频输入唯一入口（str/Msg 文本轮、`UserConfirmResultEvent`、`ExternalExecutionResultEvent`
+（v2.0.12+）、`UserInterruptEvent`，
 文本轮要求 `model.supports_text_input`，provider 不可达抛 `ModelDisconnectedError`）；输入/输出/VAD
 采样率不一致在 `reply_stream` 开始即抛 `ValueError`，v2.0.10+）、
 新增 realtime 模型卡 `qwen3.8-omni-flash-realtime`（Qwen-Omni 系，支持 image/jpeg 输入与工具）与

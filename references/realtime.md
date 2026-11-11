@@ -51,6 +51,7 @@ agent = RealtimeAgent(
     state=None,                    # 可选：AgentState（历史/权限/工具上下文）
     vad=None,                      # 可选：本地 VAD（VADBase），见下文
     aggregator=None,               # 可选：TurnAggregator，清洗用户话轮
+    delegation_agent_factory=None, # 可选：GPT-Live 委托后端工厂，v2.0.12+，见上节
 )
 ```
 
@@ -65,7 +66,7 @@ agent = RealtimeAgent(
 |---|---|
 | `async with agent:` / `connect()` / `close()` | 打开/关闭模型会话。`connect` 幂等，重连安全 |
 | `reply_stream(transport)` | 挂接一个传输并异步迭代 `AgentEvent`，直到该 transport 的输入结束 |
-| `send(inputs)` | 非音频输入的唯一入口：`str`/`Msg` 文本轮、`UserConfirmResultEvent`（HITL 应答）、`UserInterruptEvent`（打断）。文本轮会先打断进行中的回复 |
+| `send(inputs)` | 非音频输入的唯一入口：`str`/`Msg` 文本轮、`UserConfirmResultEvent`（HITL 应答）、`ExternalExecutionResultEvent`（外部执行结果，v2.0.12+ 委托任务路由）、`UserInterruptEvent`（打断）。文本轮会先打断进行中的回复 |
 | `interrupt()` | 等价于 `send(UserInterruptEvent())`，即用户按"停止"（v2.0.8+ 事件自动带当前 `reply_id`） |
 | `last_turn_metrics` | `TurnMetrics`：最近一轮的时延分解 |
 
@@ -100,7 +101,7 @@ TurnAggregator(
 
 ## Realtime 模型
 
-统一构造签名（四个 provider 一致）：
+统一构造签名（各 provider 一致）：
 
 ```python
 ModelClass(
@@ -113,6 +114,10 @@ ModelClass.list_models()          # -> list[RealtimeModelCard]，含自定义目
 ModelClass.list_models(custom_yaml_dir="/path/to/yamls")
 ```
 
+模型分两种交互模式（`InteractionMode`，v2.0.12+；卡片 `interaction_mode` 声明须与适配器
+一致否则加载抛 `ValueError`）：`TURN_BASED`（默认，请求/应答边界）与 `FULL_DUPLEX`
+（连续时间轴，无轮次概念）。
+
 ### 内置适配器与模型
 
 ```python
@@ -120,6 +125,7 @@ from agentscope.realtime import (
     DashScopeRealtimeModel,        # Qwen-Omni 系列（WebSocket）
     DashScopeAudioRealtimeModel,   # Qwen-Audio-3.0-Realtime
     OpenAIRealtimeModel,           # GPT Realtime API
+    OpenAILiveModel,               # GPT-Live（全双工 + 任务委托，v2.0.12+）
     GeminiRealtimeModel,           # Gemini Live API
     XAIRealtimeModel,              # Grok Voice
 )
@@ -130,6 +136,7 @@ from agentscope.realtime import (
 | `DashScopeRealtimeModel` | `DashScopeCredential` | `qwen-omni-turbo-realtime`、`qwen3-omni-flash-realtime`、`qwen3.5-omni-flash-realtime`、`qwen3.5-omni-plus-realtime`、`qwen3.8-omni-flash-realtime`（v2.0.10+，支持 image/jpeg 输入与工具） |
 | `DashScopeAudioRealtimeModel` | `DashScopeCredential` | `qwen-audio-3.0-realtime-flash`、`qwen-audio-3.0-realtime-plus`、`qwen-audio-3.1-realtime-plus`（v2.0.10+） |
 | `OpenAIRealtimeModel` | `OpenAICredential` | `gpt-realtime-1.5`、`gpt-realtime-2`、`gpt-realtime-2.1`、`gpt-realtime-2.1-mini` |
+| `OpenAILiveModel`（v2.0.12+） | `OpenAICredential` | `gpt-live-1`（全双工，`delegation_backend: session_chat`，工具经会话 ChatAgent 委托执行，见下节） |
 | `GeminiRealtimeModel` | `GeminiCredential` | `gemini-2.5-flash-native-audio-preview-12-2025`、`gemini-3.1-flash-live-preview` |
 | `XAIRealtimeModel` | `XAICredential` | `grok-voice-latest`、`grok-voice-think-fast-2.0` |
 
@@ -144,11 +151,58 @@ from agentscope.realtime import (
 各适配器的 `Parameters`（音色、VAD 阈值、`max_history_turns` 等）不同，
 通过 `RealtimeModelCard.parameter_schema` 或 `ModelClass.list_models()` 查看字段。
 
+### GPT-Live 与 Chat Agent 委托（v2.0.12+）
+
+`OpenAILiveModel`（GPT-Live，服务端 WebSocket）是唯一的全双工适配器：连续会话时间轴、
+无轮次边界（`push_text`/`commit_turn`/`request_response` 等轮次方法均抛
+`NotImplementedError`）；转写与音频带时间轴事件（`TimelineTranscriptDeltaEvent` 带
+`role`/`start_ms`/`end_ms`）。`Parameters`：`voice`（默认 `"marin"`）、`store`、
+`startup_timeout_s`/`close_timeout_s`。用法上 `interrupt()` 让前端停止说话但**不取消**
+后台任务；`usage_seconds`/`context_usage_ratio` 暴露用量。
+
+**Chat Agent Delegation**——GPT-Live 服务端判断需要深度任务时下发 `target="client"`
+的委托（`DelegationCreatedEvent`），由 `RealtimeAgent` 用一个普通 `Agent` 执行：
+
+```python
+from agentscope.agent import Agent, RealtimeAgent
+from agentscope.model import OpenAIChatModel
+from agentscope.realtime import OpenAILiveModel
+
+live = OpenAILiveModel("gpt-live-1", credential)
+backend = OpenAIChatModel(credential=credential, model="gpt-5.2")
+
+def _factory(state):                       # state 是隔离副本（含会话历史，剔除 Live 转写）
+    return Agent(name="Friday",            # ⚠️ 必须与 RealtimeAgent 同名，否则委托失败
+                 system_prompt="结果简洁，适合口播。", model=backend, state=state)
+
+agent = RealtimeAgent(
+    name="Friday", system_prompt="简短作答，深度问题交给任务后端。",
+    model=live,
+    delegation_agent_factory=_factory,     # 不传则客户端委托直接失败并告知模型
+)
+```
+
+机制要点：
+
+- 委托任务**串行执行**（同时一个 active，其余排队），每个带 300s 输入超时；后端 agent 的
+  工具卡片事件默认**隐藏**（缓冲），仅当产出 `RequireUserConfirmEvent` /
+  `RequireExternalExecutionEvent`（HITL/外部执行）时才对事件流可见；
+- 用户确认/提交经 `send()` 回传（`UserConfirmResultEvent` / `ExternalExecutionResultEvent`），
+  按 tool_call id 路由到对应委托任务继续驱动；不匹配发 `external_execution_result_rejected`
+  自定义事件；
+- 最终结果文本经 `send_delegation_result()` 回传给 Live 口播（长文按 ≤400 字符切块）；
+  工具状态投影回主 `state`；持久化检查点以 `"delegation_checkpoint"` 自定义事件发出；
+- 全双工模型**不支持本地 VAD**（构造时同时传 `vad` 抛 `ValueError`）；
+  `TurnAggregator` 在全双工路径不消费；完整示例见上游 `examples/realtime/openai_live_local.py`。
+
 ### RealtimeModelCard
 
 YAML 模型卡片（`realtime/_<provider>/_models/*.yaml`，可用 `custom_yaml_dir` 扩展），
 关键字段：`name` / `label` / `status`、`input_types` / `output_types`、
 `input_sample_rate` / `output_sample_rate`、`supports_tools`、
+`interaction_mode`（`turn_based`（默认）| `full_duplex`，v2.0.12+，须与适配器一致）、
+`delegation_backend`（`none`（默认）| `session_chat`，v2.0.12+，后者表示工具经会话
+ChatAgent 委托执行）、
 `max_context_tokens` / `max_audio_turns` / `max_audio_duration_s` /
 `max_session_duration_s`、`parameter_schema`（可调参数的 JSON Schema，供 UI 展示）、
 `release_date`（模型发布日期，v2.0.12+）。
@@ -160,6 +214,7 @@ YAML 模型卡片（`realtime/_<provider>/_models/*.yaml`，可用 `custom_yaml_
 ```python
 class MyRealtimeModel(RealtimeModelBase):
     type = "my_realtime"                          # 适配器标识，写进每张卡片
+    interaction_mode = InteractionMode.TURN_BASED # TURN_BASED / FULL_DUPLEX（v2.0.12+）
     truncation = TruncationSupport.EXPLICIT       # NONE / SERVER / EXPLICIT
     supports_text_input = False                   # 能否 mid-session 注入文本轮
 
@@ -173,6 +228,10 @@ class MyRealtimeModel(RealtimeModelBase):
     async def request_response(self): ...          # 请求开始生成回复
     async def cancel_response(self): ...           # 停止当前回复但不关会话
     async def truncate(self, item_id, played_ms, played_text): ...
+    def interrupt_speech(self): ...                # 可选（v2.0.12+）：全双工打断语音，
+                                                   # 默认调 cancel_response
+    async def send_delegation_result(              # 可选（v2.0.12+）：回传委托任务结果，
+        self, delegation_id, content): ...         # 默认抛 NotImplementedError
 ```
 
 `TruncationSupport` 描述被打断话轮的纠正方式：`SERVER`（provider 自纠，`truncate` 空操作）、
@@ -187,9 +246,15 @@ class MyRealtimeModel(RealtimeModelBase):
 
 `agentscope.realtime` 的模型侧事件，供自定义适配器/传输层使用（agent 已内置消费）：
 
-`ModelEvent` 基类及 `SessionEndedEvent`、`SpeechStartedEvent`、`SpeechEndedEvent`、
+`ModelEvent` 基类及 `SessionStartedEvent` / `SessionClosedEvent`（v2.0.12+）、
+`SessionUsageEvent`（累计秒数 + `context_usage_ratio`，v2.0.12+）、
+`SessionEndedEvent`、`SpeechStartedEvent`、`SpeechEndedEvent`、
 `InputTranscriptionEvent`（用户转写）、`ResponseCreatedEvent`、`AudioDeltaEvent`（生成的音频块）、
-`TranscriptDeltaEvent`（助手转写增量）、`ToolCallEvent`、`ResponseDoneEvent`、`ModelErrorEvent`。
+`TranscriptDeltaEvent`（助手转写增量）、`TimelineAudioDeltaEvent` /
+`TimelineTranscriptDeltaEvent`（全双工带时间轴的音频块/字幕，v2.0.12+）、
+`DelegationCreatedEvent`（GPT-Live 委托开始：`delegation_id`/`target`/`response_id`/`offset_ms`，v2.0.12+）、
+`DelegatedResponseEvent`（GPT-Live 委托的嵌套 Responses 事件，v2.0.12+）、
+`ToolCallEvent`、`ResponseDoneEvent`、`ModelErrorEvent`。
 
 ## 传输层 (Transport)
 
@@ -199,7 +264,7 @@ from agentscope.realtime import (
     LocalAudioTransport,    # 本地声卡（sounddevice）
     AudioFrame,             # PCM16 单声道音频帧（上游用户音频）
     ControlFrame,           # 控制帧：type + data
-    ControlFrameType,       # TEXT / USER_CONFIRM / INTERRUPT
+    ControlFrameType,       # TEXT / USER_CONFIRM / INTERRUPT / EXTERNAL_EXECUTION_RESULT（v2.0.12+）
     TransportFrame,         # AudioFrame | ControlFrame 联合
     PlayoutPosition,        # 播放进度（item_id + 已播放毫秒/文本前缀）
 )
@@ -215,11 +280,12 @@ from agentscope.realtime import (
 - `clear_audio()` — 清空待播队列，返回打断前的 `PlayoutPosition`；
 - `playout()` — 不打断地查当前播放位置。
 
-`ControlFrameType` 三个成员与 `RealtimeAgent` 的公共方法一一对应——远端客户端
+`ControlFrameType` 各成员与 `RealtimeAgent` 的公共方法一一对应——远端客户端
 （浏览器）通过 datachannel 发控制帧与 Python 调用方直接调方法走同一条语义路径：
 `TEXT`（打字的用户轮 → `send()`）、`USER_CONFIRM`（HITL 权限确认 →
 `UserConfirmResultEvent`）、`INTERRUPT`（按停止键 → `interrupt()`；区别于说话
-打断，后者由 provider/VAD 话轮检测触发）。
+打断，后者由 provider/VAD 话轮检测触发）、`EXTERNAL_EXECUTION_RESULT`（外部执行
+结果 → `ExternalExecutionResultEvent`，v2.0.12+ 委托任务路由）。
 
 `LocalAudioTransport` 基于 `sounddevice`（PortAudio），麦克风采集回调在音频线程上运行、
 经 `call_soon_threadsafe` 交还事件循环；播放进度统计与浏览器 AudioWorklet 同一语义：
@@ -252,11 +318,15 @@ from agentscope.realtime import VADBase, SpeechTransition
 （`turn_detection_disabled=True`），由本地 VAD 唯一决定话轮边界——
 `STARTED` 打断用户插话压过的回复，`ENDED` 提交用户话轮交给模型。
 不传 `vad` 时由 provider 决定，agent 只响应其上报。
+全双工模型（如 GPT-Live）无轮次边界，**不支持本地 VAD**，同时传入抛 `ValueError`（v2.0.12+）。
 
 ## 已知限制（v2.0.8+）
 
 - 工具 schema 与 instructions 仅在 `connect()` 时发送一次；会话中途激活工具组 / 安装
   skill（ResetTools、meta tool）要等**下一次 connect**（重连）才生效。
+- GPT-Live（v2.0.12+）：`supports_tools: false`——connect 时不发送工具 schema，
+  工具全部经委托后端的 ChatAgent 执行；全双工不支持文本轮（`send()` 文本轮抛
+  `NotImplementedError`）。
 
 ## 服务化实时语音（v2.0.10+ 主干）
 
@@ -276,3 +346,8 @@ from agentscope.realtime import VADBase, SpeechTransition
 （`type`/`credential_id`/`model`/`parameters`，引用已存的 credential）；未配置或
 `turn_detection="none"`（浏览器语音模式不支持）返回 409；同一 session 重复 offer
 会先关闭旧连接。WebRTC 栈（aiortc）随 `agentscope[service]` extra 安装。
+
+GPT-Live（v2.0.12+）：`openai_credential` 的 `/realtime/models` 会列出 `gpt-live-1`。
+选它做 `realtime_model_config` 时服务端自动用该 session 当前配置的 Chat 模型、工具与
+中间件组装委托后端（Web UI 语音会话自动复用 session 的 Chat 能力）；offer 前置两个
+409：session 存在未完成的 Chat 确认/外部执行工具调用，或未配置 `chat_model_config`。

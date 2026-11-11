@@ -330,6 +330,9 @@ model = OpenAIChatModel(
 
 > v2.0.10+：流式音频各 delta 以占位 WAV 头（chunk 尺寸 0xFFFFFFFF）开头，累加产出的最终块会把
 > RIFF/data chunk 尺寸重写为真实值——流式与非流式一样，落盘即为可直接播放的合法 WAV。
+> v2.0.12+：非流式下经 `extra_body` 覆盖 `audio.format` 时，返回 `DataBlock` 的 `media_type`
+> 按**实际生效**的格式标注（优先级 per-call `extra_body` > 实例 `extra_body` > 直接 `audio`
+> 参数；此前 mp3 会被错标为 `audio/wav`）。
 
 ### 调用方式
 
@@ -429,6 +432,8 @@ from agentscope.embedding import (
 
 `__call__` 自动**分批并发**（按 `batch_size` 切片，`asyncio.gather` 并发，每批独立重试），
 子类只需实现单批 `_call_api`。各 provider 内置可重试异常（`_get_retryable_exceptions`）。
+某批最终失败时框架先取消并等待其余批次收尾，再把原始异常抛给调用者（v2.0.12+，
+此前兄弟批次任务在后台泄漏）；调用方取消同样先完成清理再抛出。
 多批次合并后的 `EmbeddingResponse` 统计语义（v2.0.11+ 修正）：`usage.time` 取**最大批次耗时**
 （批次并发执行，此前取总和会高估墙钟时间）；`source` 仅当**所有**批次都命中缓存时为 `"cache"`，
 否则为 `"api"`（此前多批次合并恒为 `"api"`，即使全部命中缓存）。
@@ -453,7 +458,8 @@ emb_model = OpenAIEmbeddingModel(
     context_size=8191,          # 单条输入 token 上限（OpenAI 默认 8191，其余 8192）
     max_retries=3,              # 每批重试次数（默认 3）
     retry_delay=1.0,            # 重试间隔（默认 1.0s）
-    # batch_size 由各 provider 内部定（如 OpenAI=2048, Gemini=100, Ollama=512）
+    # batch_size 由各 provider 内部定（如 OpenAI=2048, Gemini=100, Ollama=512）；
+    # 基类要求 >0，自定义 embedding 子类传 <=0 构造即抛 ValueError（v2.0.12+）
 )
 ```
 
@@ -474,7 +480,8 @@ response = await emb_model(inputs=["hello", "world"])
 > `pass_dimensions=False` 时实例值不发，per-call 值照常透传）；DashScope 文本路径合并 `parameters`
 > （此前被忽略）且 per-call `api_key` 可用（此前报关键字重复 TypeError）。DashScope/Gemini 的
 > **多模态路径只合并 per-call kwargs、不合并 `parameters`**。调用参数计入缓存 key（`api_key` 除外，
-> 换 key 仍可命中旧缓存）。
+> 换 key 仍可命中旧缓存）；OpenAI 的 `base_url` 同样计入缓存 key（v2.0.12+，官方 API 与
+> vLLM/Ollama 兼容端点的同名模型不再互相命中对方缓存，旧缓存条目一次性失效）。
 
 ### provider 差异
 
@@ -492,7 +499,8 @@ response = await emb_model(inputs=["hello", "world"])
 > v2.0.10 起 `max_file_number=0` 真正生效（写后不保留任何缓存文件，`None` 才是不限），且新文件
 > 因超过 `max_cache_size` 被拒后，文件数上限仍独立执行。v2.0.12+：Gemini 多模态路径同样读写缓存
 > （此前完全不走缓存）；DashScope 多模态缓存 key 改用深拷贝（SDK 上传本地/base64 图片时就地改写
-> `input`，导致写入与查询的 key 不一致、多模态缓存从不命中）。
+> `input`，导致写入与查询的 key 不一致、多模态缓存从不命中）；缓存文件名哈希对 dict 键序不敏感
+> （`sort_keys=True`，语义相同的调用共享缓存，旧缓存文件因哈希规则变化一次性失配）。
 > 响应解析：OpenAI 兼容服务端省略 `index`、或在 `embedding` 为空时回退到 `dense_embedding`；
 > v2.0.12+ DashScope 文本按 `text_index`、多模态按 `index` 还原输入顺序（缺失时按原位置，
 > 此前服务端乱序返回会让向量与输入错配）。

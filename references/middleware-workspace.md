@@ -292,8 +292,9 @@ agent = Agent(name="Assistant", system_prompt="...", model=smart_model,
 
 行为细节：
 - **每条 reply 只决策一次**，决策结果记入 `state.middle_context`——reply 中途恢复
-  （如用户确认工具权限后继续）保持原路由，不会重新分类；全新 reply（带新输入调用）
-  始终重新路由，不会沿用上一条 reply 的路由结果。
+  （如用户确认工具权限后继续）保持原路由，不会重新分类；全新 reply（无论带不带新输入）
+  始终重新路由，不会沿用上一条 reply 的路由结果（v2.0.12+ 修复了无输入调用
+  `inputs=None` 误继承上一条路由的问题，此时回到 agent 自己的模型）。
 - 候选 `name` 必须唯一（重复构造时抛 `ValueError`）。
 - **失败兜底**：路由模型抛错、或选中未知候选名时记 warning 并保持 agent 自己的模型，
   不影响回复进行。
@@ -461,7 +462,9 @@ await reme_mw.close()
 - 静态检索是后台任务，单次非常短的 reply 可能先结束；这种情况下本轮不注入，写回仍会执行。
 - `embedding_model` 为 `None` 时，搜索仅按关键词；`chat_model` 为 `None` 时由 AgentScope 内置的
   最小 ReMe 配置从 ReMe 的 `LLM_*` 环境变量装配 LLM（v2.0.7 起不再接受 `config` 参数，
-  内嵌应用一律使用 AgentScope 自有的精简配置，保留完整记忆生命周期）。
+  内嵌应用一律使用 AgentScope 自有的精简配置；dream 整合只做 daily cards → digest nodes，
+  v2.0.12+ 起不再生成兴趣主题/标签索引）。
+- `Parameters.top_k` 须 ≥1，违例构造即抛 pydantic `ValidationError`（v2.0.12+）。
 
 ### AgenticMemoryMiddleware — 文件系统长期记忆（v2.0.4+）
 
@@ -507,6 +510,7 @@ Agent **不该存什么**（代码结构、git 历史、临时任务状态等—
 > v2.0.12+：`retrieval_max_tokens_per_frontmatter`（默认 256）是每个记忆文件参与相关性筛选的
 > `type` + `description` **共享** token 预算（先保 type 再保 description）；frontmatter 被字节上限
 > 截断时读取窗口延伸到闭合的 `---` 再完整解析（此前长 frontmatter 会丢字段）。
+> 四个 `*_tokens`/`*_files` 参数须 ≥0（v2.0.12+，违例构造抛 pydantic `ValidationError`）。
 
 ### 中间件提供工具
 
@@ -560,7 +564,7 @@ workspace = LocalWorkspace(
     workspace_id=None,                 # 可选，默认自动生成
     default_mcps=[mcp_client],         # 初始 MCP（仅首次生效）
     skill_paths=["/path/to/skills"],   # 初始技能目录（v2.0.5+ 支持 ~/path 展开）
-    max_live_stateful_mcps=None,       # 可选，并发 live stateful MCP 上限（v2.0.6+）
+    max_live_stateful_mcps=None,       # 可选，并发 live stateful MCP 上限（v2.0.6+；None 走默认推导，显式 0 亦生效）
     instructions="自定义指令模板",       # 支持 {workdir} 占位符
 )
 ```
@@ -932,7 +936,8 @@ instructions = await workspace.get_instructions()  # 系统提示片段
 - v1 文件（裸 JSON 数组）启动时自动迁移到 `("", "")` 遗留 id 下，下次写入即升级为 v2。
 - 文件损坏或不可读时回退到 `default_mcps`，不阻断启动。
 
-**LRU 容量管理**：`max_live_stateful_mcps`（构造参数，默认 `max(40, 2 * <stateful defaults>)`）
+**LRU 容量管理**：`max_live_stateful_mcps`（构造参数，默认 `max(40, 2 * <stateful defaults>)`；
+仅 `None` 走默认推导，显式传 `0` 亦按原样生效——禁用全部 live stateful MCP，v2.0.12+）
 限制并发存活的 **stateful** MCP 实例总数（stateless 不占名额，无连接可回收）。超出时按
 `_mcp_last_used` 时间戳 LRU 淘汰**其他** agent/session 的实例；发起方自身的集合永不被淘汰，
 因此总能拿到完整默认集。
@@ -1147,6 +1152,12 @@ bus = InMemoryMessageBus()
   不是抽象方法——已有自定义 bus 不会被破坏，但要支持服务化聊天输入队列需自行覆盖；
   内置两种 bus 均已实现。同期新增的 `acquire_lock_bounded(key, *, ttl_secs=600, timeout_secs=2.0)`
   （限时取锁，超时抛 `TimeoutError`）与 `registry_get_many` 也带默认实现。
+  v2.0.12dev 主干再补两个低层方法：`registry_del_if(namespace, field, *, expected)`（原子
+  compare-and-delete，默认实现返回 `False` 的 no-op）与 `registry_set_if` 的 `expected`
+  支持 `None`（仅当字段不存在时创建）——**覆写过 `registry_set_if` 的自定义 bus 必须处理
+  `None`**；二者为后台任务记录所需。
+  队列 `queue_push` 的 `ttl_secs` 语义为**整 key 滑动 TTL**（每次 push 刷新整个队列的过期，
+  内存与 Redis 实现已一致；`None` 保留已有过期设置、`<=0` 立即删除整个队列）。
 
 > ℹ️ MessageBus 属于服务化层基础设施，普通 agent 开发者无需直接使用——由 `create_app` 启动的 FastAPI 服务在内部持有并调用。
 
@@ -1195,6 +1206,7 @@ storage = AsyncSQLAlchemyStorage(
 
 - `agent_router` — 智能体管理
 - `chat_router` — 对话（REST + SSE；v2.0.12+ 含可编辑聊天输入队列 `/chat/queue*`，见下文）
+- `background_task_router` — 后台任务只读查询（`/background-tasks`，v2.0.12+，见下文）
 - `credential_router` — 凭据管理
 - `model_router` — 模型配置
 - `embedding_model_router` — 列出某 credential 类型下可用 embedding 模型（`GET /embedding-model/`，v2.0.5+）
@@ -1234,6 +1246,39 @@ storage = AsyncSQLAlchemyStorage(
   `chat_input_cancelled` / `chat_queue_changed`（队列快照变化）/ `chat_input_injected` /
   `chat_input_steer_failed`（steering 结果）。
 - 自定义 `MessageBus` 须覆盖 `queue_read` / `queue_replace` 才支持该队列（见上文「消息总线」）。
+
+### 后台任务查询 /background-tasks（v2.0.12+）
+
+工具执行超过 `tool_offload_timeout_secs` 被卸载到后台后（占位结果 + 完成后 HintBlock 推送
+回 session），可用两个**只读**端点跟踪任务（`X-User-ID` 鉴权同其他端点）：
+
+| 端点 | 用途 |
+|---|---|
+| `GET /background-tasks?session_id=` | 列当前用户全部后台任务（`session_id` 可选过滤）→ `{tasks: [BackgroundTaskInfo], total}` |
+| `GET /background-tasks/{task_id}` | 查单个任务；不存在或属于其他用户统一 404 |
+
+`BackgroundTaskInfo` 字段：`task_id` / `session_id` / `agent_id` / `tool_name` /
+`summary`（工具调用摘要 ≤128 字符，形如 `Bash(command=ls -la, ...)`，**未脱敏**，可能含
+敏感参数，勿展示给终端用户）/ `status`（`"running" | "completed" | "failed" | "cancelled"`；
+工具 `state=ERROR` → `failed`、`INTERRUPTED` → `cancelled`）/ `started_at` /
+`execution_started_at`（实际执行开始时刻，早于卸载；旧版本产生的记录为 `null`）/
+`completed_at` / `error_summary`（仅 failed，≤512 字符）。
+
+保留策略：每用户最多保留 50 条终态记录（按完成时间淘汰最旧），终态记录 TTL 24h；
+运行中记录带 120s 租约（worker 崩溃后约 2 分钟自动过期）——多副本部署下任意实例都能
+回答查询。内置 Web UI 提供 background 面板轮询该端点（v2.0.12+）。
+
+**卸载占位符的结构化 metadata**：工具被卸载时返回的占位 `ToolChunk`/`ToolResponse`
+（`state=SUCCESS`，`<system-reminder>` 文本）附带约定键，下游无需解析文本即可程序化识别：
+
+```python
+resp.metadata == {
+    "background_task_id": "...",   # 与占位文本、REST 查询同一 id
+    "tool_name": "Bash",
+    "tool_state": "running",       # 占位符固定为 running
+    "offloaded_at": 1762680000.0,  # time.time() 时间戳
+}
+```
 
 ### /health 健康检查端点（v2.0.6+）
 
@@ -1608,6 +1653,8 @@ Hub 上的一个条目叫 **card（卡片）**，是元数据模板，不是可�
 
 - `MCPCard` 的 `config_template` 带 `${...}` 占位符（API key 等），由用户在安装时填值，
   占位符定义在 `inputs_schema`（JSON Schema，密钥字段标 `writeOnly:true` + `format:password`）。
+  从 GitHub MCP Registry 安装 remote server 时，URL 与 header 中的 `{VAR}` 占位符都会重写为
+  `${VAR}` 并声明进 inputs（v2.0.12+，此前 URL 占位符原样入库永远填不上值）。
 - `SkillCard` 无配置项——安装 skill 只是把文件复制进 workspace，没有输入表单。
 - card 有两个**故意分离**的标识：`id`（hub 本地寻址，可任意不透明字符串）与
   `name`（安装后的客户端/skill 名，必须匹配 `[a-zA-Z0-9_-]+`，会组成工具名 `mcp__{name}__{tool}`）。
@@ -1825,6 +1872,9 @@ v2.0.6+ 起，`GET /sessions`（列表）返回的每个 `SessionView` 也直接
 
 > ⚠️ `PATCH /sessions/{session_id}` 在有 chat run 持有 session 时返回 **409 Conflict**：
 > agent 在 run 开始时一次性快照配置，运行中修改当前 reply 会被忽略，且写入会与 run 自身的状态持久化竞争。
+> 补丁合并后的 `SessionConfig` 校验失败（如必填配置置 `null`）返回 **422**（v2.0.12+，
+> 此前以 500 漏出）；`PATCH /channels/{id}` 同理——非法补丁整体 422 拒绝，不再把
+> `null` 写入存储。
 
 ### 跨用户资源共享（ResourceAccessPolicy，v2.0.4+）
 

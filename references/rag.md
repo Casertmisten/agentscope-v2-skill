@@ -60,7 +60,7 @@ uv pip install "agentscope[mem0]"
 
 | Parser | 支持格式 | Section 粒度 |
 |---|---|---|
-| `TextParser` | text/markdown 等 | 整个文件为 1 个 Section（不按标题切分） |
+| `TextParser` | text/markdown 等 | 整个文件为 1 个 Section（不按标题切分）；`supported_media_types` 含标准 `application/yaml` 与旧别名 `application/x-yaml`（v2.0.12+，服务模式上传 yaml 不再匹配不到 parser），解码后剥离开头 BOM（U+FEFF，v2.0.12+） |
 | `PDFParser` | `application/pdf` | 每页 1 个 Section（仅文本，不提取图片；pypdf 惰性读取失败同样抛文档化 `ValueError`，v2.0.10+） |
 | `PPTParser` | PPTX | 每张幻灯片 1 个 Section（组合形状内的文本同样读取，v2.0.8+；插入占位符的图片保留其内容，未填充占位符不算图片，v2.0.9+；文本框软换行规范化、延迟 XML 读取错误统一抛文档化 `ValueError`，v2.0.10+） |
 | `ImageParser` | 图像 | 整个文件为 1 个 Section(多模态) |
@@ -159,6 +159,9 @@ store = QdrantStore(path="./qdrant_data")         # 本地磁盘持久化
 
 > v2.0.8+:`metadata_filter` 支持 float 值——Qdrant 的 MatchValue 仅接受 str/int/bool,
 > float 自动改用 Range(`gte`/`lte` 同值)精确匹配;NaN/inf 等非有限浮点值抛 `ValueError`。
+> v2.0.12+ 起 `QdrantStore` 的 `metadata_filter` 支持 `None` 值——映射为 IsNull 条件，
+> 匹配**显式为 null** 的字段（不匹配缺失该键的记录），可与其它谓词 AND 组合；仅 Qdrant
+> 后端，Milvus/MongoDB/ES 行为未变。
 
 ## MilvusLiteStore —— 嵌入式向量库后端（v2.0.4+）
 
@@ -179,7 +182,9 @@ store = MilvusLiteStore(
 ```
 
 > 两种后端都需用 `async with` 进出:`__aenter__` 打开连接,`__aexit__` 关闭。collection 在首次操作时
-> 惰性创建(`ensure_collection` 幂等且记忆化),无需手动建。
+> 惰性创建(`ensure_collection` 幂等且记忆化),无需手动建。v2.0.12+ 起 `MilvusLiteStore`
+> 读取前自动 `load_collection`（幂等），Milvus 服务/进程重启后 collection 处于 released
+> 状态不再报错。
 >
 > ℹ️ v2.0.4.post1 起 `MilvusLiteStore` 要求 `milvus-lite>=3.1.0`（COSINE 度量下
 > `distance` 字段语义变化，新版本 `distance` 即余弦相似度，框架不再做 `1.0 - distance` 转换）。
@@ -283,7 +288,7 @@ kb = KnowledgeBase(
 
 | 方法 | 作用 |
 |---|---|
-| `search(queries, top_k=5, score_threshold=None)` | 批量 embed 查询 → 并发检索 → 去重(按 `document_id, chunk_index`)→ 按 score 降序截 top_k |
+| `search(queries, top_k=5, score_threshold=None)` | 批量 embed 查询 → 并发检索 → 去重(按 `document_id, chunk_index`)→ 按 score 降序截 top_k；`top_k` 须 ≥1 否则抛 `ValueError`（v2.0.12+） |
 | `insert_document(chunks, document_id=None, document_metadata=None)` | 批量 embed 并插入为同一文档,返回 `document_id` |
 | `delete_document(document_id)` | 按文档 id 删除其全部记录（`metadata_filter` 设定时同时按过滤键限定作用域，v2.0.11+） |
 | `list_documents()` | 列出当前知识库内所有文档摘要（返回 `list[DocumentSummary]`） |
@@ -397,7 +402,7 @@ agent = Agent(
 | `score_threshold` | `None` | 最低 score 过滤阈值,尺度随 store 度量(距离度量下为负值,v2.0.8 语义统一) |
 | `emit_hint_event` | `True` | static 模式下发 `HintBlockEvent`,前端可展示命中片段 |
 | `persist_hint` | `False` | static 模式下是否保留注入的 hint(默认模型调用后即移除,避免污染下一轮) |
-| `hint_template` | 内置 | 包裹检索结果的模板,须含**且仅含一个** `{context}` 占位符,否则校验报错 |
+| `hint_template` | 内置 | 包裹检索结果的模板,须含**且仅含一个** `{context}` 占位符且不得含其它未定义占位符（如 `{doc_id}`）,否则构造时抛 `ValueError`（未知占位符检查 v2.0.12+，此前运行期才报错） |
 | `rerank_candidate_k` | `None` | v2.0.8：供 rerank 模型评判的候选 chunk 数(≥top_k,默认 2×top_k,上限 50);未配置 rerank 模型时忽略 |
 | `rerank_prompt` | 内置 | v2.0.8：rerank 指令模板,含 `{query}` 与可选 `{top_k}` 占位符,候选内容由中间件追加 |
 
