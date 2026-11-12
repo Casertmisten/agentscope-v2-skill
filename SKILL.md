@@ -15,9 +15,13 @@ SteeringMiddleware 运行中追加输入引导 reply，及 on_check_permission
 Workspace 工作区（八种 Workspace 均支持内置工具，Backend 抽象：LocalBackend / DockerBackend / E2BBackend /
 K8sBackend / OpenSandboxBackend / DaytonaBackend / AppleContainerBackend / BubblewrapBackend）、Embedding/TTS 多模态模型
 （Embedding v2.0.3 重构为泛型基类，dimensions 必填 + FileEmbeddingCache 文件缓存；TTS 含 OpenAITTSModel /
-DashScope CosyVoice / GeminiTTSModel 等 + VoiceCloningClient 语音复刻（v2.0.12+）；ASR 语音转写 agentscope.asr：ASRModelBase 批式/实时双协议 +
+DashScope CosyVoice / GeminiTTSModel（v2.0.12+ 增 3.8 结构化语音 + style 风格指令）等 +
+VoiceCloningClient 语音复刻（v2.0.12+）；ASR 语音转写 agentscope.asr：ASRModelBase 批式/实时双协议 +
 OpenAIASRModel gpt-4o-transcribe，v2.0.11+；DashScopeASRModel / DashScopeRealtimeASRModel，v2.0.12+）、
-thinking_enable 三态思考开关（None 不发送交给 provider 默认，v2.0.12+）、RAG 知识库（agentscope.rag：
+thinking_enable 三态思考开关（None 不发送交给 provider 默认，v2.0.12+）、
+内容拦截错误归一化（模型构造参数 raise_on_refusal / raise_on_content_filter → 统一 ContentBlockedError
+带 phase/provider/original_code 等结构化字段，v2.0.12+）、Gemini 4 Argon/Carbon thinking_level
+推理档位（v2.0.12+）、RAG 知识库（agentscope.rag：
 KnowledgeBase / QdrantStore / MilvusLiteStore / MongoDBStore / ElasticsearchStore / Parser-Chunker 管线 / RAGMiddleware static+agentic 双模式 + LLM 重排序）、
 SubAgentTemplate 子智能体模板（含团队 Leader HITL 事件投影 + AgentInvite 邀请已有 agent）、App 服务化（含 KnowledgeBaseManager /
 BlobStore / 内嵌或独立索引 worker / MessageBus 消息总线：
@@ -39,7 +43,8 @@ SOP 标准作业程序（agentscope.sop：SOP/SOPStep/SOPEngine 固定里程碑�
 终端 UI TUI（launch_tui 全屏 Textual 聊天 + launch_realtime_ui 语音会话界面 + ChatUI/MessagesUI 可嵌入组件，v2.0.8+）、
 A2A 协议远程智能体（A2AAgent 客户端适配器 + A2AAgentState，连接任意 A2A 1.0 服务）、
 实时语音智能体（RealtimeAgent 双向音频流 + agentscope.realtime 模块：DashScopeRealtimeModel Qwen-Omni /
-DashScopeAudioRealtimeModel Qwen-Audio / OpenAIRealtimeModel GPT Realtime / GeminiRealtimeModel Live API /
+DashScopeAudioRealtimeModel Qwen-Audio / OpenAIRealtimeModel GPT Realtime / GeminiRealtimeModel Live API
+（含 3.8 Live Extended Thinking 后台推理 + 非阻塞工具，v2.0.12+）/
 XAIRealtimeModel Grok Voice / OpenAILiveModel GPT-Live（全双工 + delegation_agent_factory 委托普通 ChatAgent
 执行深度任务、工具经委托后端，v2.0.12+）六路适配器 + RealtimeModelCard + Transport Frame 传输（AudioFrame/ControlFrame）+
 VAD 话轮检测 + TurnAggregator/TurnMetrics + send() 离散输入入口，v2.0.8+；新增 Qwen3.8 Omni Realtime /
@@ -440,7 +445,34 @@ Embedding 调用级参数优先级对齐（OpenAI per-call `dimensions`、DashSc
 多模态缓存 key 深拷贝（此前永不命中）、`FileEmbeddingCache` 负值抛 `ValueError`、`MilvusLiteStore`
 `batch_size <= 0` 抛 `ValueError`、MongoDB 列举接口 `metadata_filter` 按 `$eq` 字面匹配、`WordParser`
 保留段内 tab/软换行并跳过 `w:del` 删除修订、文本框内多段落各自换行、AgenticMemory 长 frontmatter
-读到闭合 `---` 完整解析、RealtimeAgent 流结束时清理未绑定的本地用户话轮（v2.0.12+）。
+读到闭合 `---` 完整解析、RealtimeAgent 流结束时清理未绑定的本地用户话轮（v2.0.12+）、
+内容拦截错误归一化（v2.0.12+）：`ChatModelBase` 构造参数 `raise_on_refusal` / `raise_on_content_filter`
+（默认 `False`，opt-in）把 provider 的拒绝/内容过滤信号归一为 `ContentBlockedError`——结构化字段
+`phase`（INPUT/OUTPUT/UNKNOWN）/`provider`/`original_code`/`request_id`/`partial_output`/`requires_review`
+（要求人工审查，仅 OpenAI Responses 置 True）；OpenAI Chat/Responses 支持双开关，Anthropic/MiniMax
+仅 refusal，DashScope/DeepSeek/Gemini/Moonshot/Volcengine 仅 content_filter；该异常不消耗模型 SDK
+重试预算，INPUT/UNKNOWN 阶段不以同 payload 重试，仅 OUTPUT 且无部分输出才在 `max_retries` 内重试、
+`requires_review`/`partial_output` 直接上抛；无关默认行为：OpenAI Chat 空 content + 非空 refusal 时
+refusal 文本填为 `TextBlock`（此前静默丢弃）、
+Gemini 4 Argon / Carbon 模型（v2.0.12+）：`Parameters.thinking_level: low|medium|high`（不设默认
+medium）取代 budget 思考——设 `thinking_budget` 报错、`temperature`/`top_p`/`top_k` 被丢弃并告警、
+`max_output_tokens > 65536` 报错、http 超时默认 15 分钟；非 Gemini 4 设 `thinking_level` 报错；
+per-call kwargs 接受 `thinkingConfig`/`maxOutputTokens` 等 camelCase 别名（snake/camel 同传报错）、
+Gemini 3.8 Live Extended Thinking（v2.0.12+）：`gemini-3.8-live-extended-thinking` 模型卡
+（`RealtimeModelCard.supports_extended_thinking`）+ `Parameters.thinking_level`（后台推理深度，
+非扩展思考模型设置报错）；工具全部 NON_BLOCKING——`ToolCallEvent.non_blocking=True` 时立即执行
+且不自动 request_response，回复等后台工具全部完成 + 模型 IDLE；新增 `InputTranscriptionDeltaEvent`
+（未定稿输入转写增量，定稿替换占位 UserMsg）；`RealtimeModelBase` 新增可选方法
+`push_tool_result_silently()`（迟到工具结果不打断生成）/ `start_turn()`（本地 VAD 新话轮通知）、
+Gemini 3.8 TTS（v2.0.12+）：`gemini-3.8-flash-tts` / `gemini-3.8-flash-lite-tts` 结构化语音 +
+`Parameters.style` 交付风格指令（非 3.8 模型设置报错）；`TTSModelBase.validate_parameters()`
+classmethod 构造期校验钩子；`GeminiTTSModel` `stream` 默认 False→True、
+内置工具修复组（v2.0.12+）：`Bash`/`PowerShell` `timeout < 1ms` 拒绝执行返回 ERROR 结果；`Grep`
+始终 `--no-config`（宿主机 ripgrep 配置不再改变搜索语义）；`Glob`/`Grep` 相对 `path` 以 workspace
+目录为基准（`LocalBackend(workdir=...)` 新参数，`LocalWorkspace` 内部即如此装配，此前以进程 CWD
+为基准）；QdrantStore `search()` score 符号按 collection 实际 metric 归一（构造参数 `distance`
+只管新建 collection；命名向量/非 dense 抛 `ValueError`）；Gemini formatter 失败工具结果发
+`error` 键（成功仍 `output`）；schema 引导修复检测到嵌套参数被丢弃时整体回退原始解析结果。
 AgentScope 2.0.11 已正式发布，main 进入 2.0.12dev。
 
 **安装**：`pip install agentscope`（Python >= 3.11）

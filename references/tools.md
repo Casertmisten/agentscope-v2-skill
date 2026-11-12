@@ -67,7 +67,13 @@ toolkit = Toolkit(tools=[Bash(), Read(), Write(), Edit()])
 > 校验的直调路径不再静默读全文件），非法时返回 `ERROR` 状态结果；非 UTF-8 文件 `Read` 以 U+FFFD
 > 替换非法字节显示并附说明，且**不写入读缓存**，`Edit` 改为严格 UTF-8 解码、拒绝修改此类文件
 > （返回 `Error reading file: ...`，此前会被 U+FFFD 有损重写整个文件）；`Write` 落盘失败返回
-> `Error writing file: ...` 的 `ERROR` 结果而非抛异常（模型可见并重试）。
+> `Error writing file: ...` 的 `ERROR` 结果而非抛异常（模型可见并重试）；`Bash` / `PowerShell`
+> 的 `timeout`（毫秒）小于 1 直接拒绝执行，返回 `Error: timeout must be at least 1ms, got: {timeout}.`
+> 的 `ERROR` 结果；`Grep` 调 ripgrep 时始终附加 `--no-config`——忽略 `RIPGREP_CONFIG_PATH`
+> 指向的配置与用户级 rg 配置（pattern 始终按正则解释，宿主机配置不再静默改变搜索行为）。
+> `Glob` / `Grep` 的 `path` 参数改为以 **workspace 目录**为基准解析：空值搜索 workspace 根、
+> 相对路径拼到 `backend.getcwd()` 上（保留 `..` 交文件系统解析 symlink），此前以 Python 进程
+> CWD 为基准（Docker/E2B 等容器后端语义不变）。
 
 ### PowerShell 工具（v2.0.5+，Windows）
 

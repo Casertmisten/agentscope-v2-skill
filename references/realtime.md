@@ -137,7 +137,7 @@ from agentscope.realtime import (
 | `DashScopeAudioRealtimeModel` | `DashScopeCredential` | `qwen-audio-3.0-realtime-flash`、`qwen-audio-3.0-realtime-plus`、`qwen-audio-3.1-realtime-plus`（v2.0.10+） |
 | `OpenAIRealtimeModel` | `OpenAICredential` | `gpt-realtime-1.5`、`gpt-realtime-2`、`gpt-realtime-2.1`、`gpt-realtime-2.1-mini` |
 | `OpenAILiveModel`（v2.0.12+） | `OpenAICredential` | `gpt-live-1`（全双工，`delegation_backend: session_chat`，工具经会话 ChatAgent 委托执行，见下节） |
-| `GeminiRealtimeModel` | `GeminiCredential` | `gemini-2.5-flash-native-audio-preview-12-2025`、`gemini-3.1-flash-live-preview` |
+| `GeminiRealtimeModel` | `GeminiCredential` | `gemini-2.5-flash-native-audio-preview-12-2025`、`gemini-3.1-flash-live-preview`、`gemini-3.8-live`、`gemini-3.8-live-extended-thinking`（v2.0.12+，见下节） |
 | `XAIRealtimeModel` | `XAICredential` | `grok-voice-latest`、`grok-voice-think-fast-2.0` |
 
 `DashScopeAudioRealtimeModel` 是 `DashScopeRealtimeModel` 的子类，差异：
@@ -195,6 +195,41 @@ agent = RealtimeAgent(
 - 全双工模型**不支持本地 VAD**（构造时同时传 `vad` 抛 `ValueError`）；
   `TurnAggregator` 在全双工路径不消费；完整示例见上游 `examples/realtime/openai_live_local.py`。
 
+### Gemini Live Extended Thinking（v2.0.12+）
+
+`gemini-3.8-live-extended-thinking` 模型卡（`supports_extended_thinking: true`）开启后台
+扩展思考：推理在模型后台持续进行，工具变为非阻塞，响应完成改由 `interactionStatus == "IDLE"`
+判定（`turnComplete` 不再关闭响应）。
+
+```python
+from agentscope.credential import GeminiCredential
+from agentscope.realtime import GeminiRealtimeModel
+
+model = GeminiRealtimeModel(
+    "gemini-3.8-live-extended-thinking",
+    GeminiCredential(api_key="xxx"),
+    parameters=GeminiRealtimeModel.Parameters(
+        thinking_level="high",   # low | medium | high（后台推理深度；不设则不发 thinkingConfig）
+    ),
+)
+```
+
+行为要点：
+
+- `Parameters.thinking_level` 仅支持 `supports_extended_thinking=True` 的模型——
+  其他 Gemini Live 模型设置时构造即抛 `ValueError`（"thinking_level requires Gemini Live
+  Extended Thinking."）；
+- 所有工具声明自动加 `"behavior": "NON_BLOCKING"`：`ToolCallEvent.non_blocking=True` 时
+  工具立即执行且不自动 `request_response`，回复要等**后台工具全部完成 + 模型 IDLE** 才结束；
+- 用户输入的部分转写以新事件 `InputTranscriptionDeltaEvent`（`item_id`/`delta`/`response_id`）
+  流出，定稿（`InputTranscriptionEvent`）时替换 `state.context` 中的占位 `UserMsg`、
+  被丢弃时移除（checkpoint 快照剔除未定稿的部分转写消息）；
+- 本地 VAD 检测到新用户话轮时调用 `model.start_turn()`；回复被打断后陈旧工具结果经
+  `model.push_tool_result_silently()` 送回（Gemini wire 上加 `scheduling: "SILENT"`，
+  不打断进行中的生成）；
+- 内部走 `v1alpha` WebSocket 端点（普通 Live 模型仍走 `v1beta`）；带 `thought` 标记的
+  思维摘要 part 不当作语音转录处理。
+
 ### RealtimeModelCard
 
 YAML 模型卡片（`realtime/_<provider>/_models/*.yaml`，可用 `custom_yaml_dir` 扩展），
@@ -205,7 +240,9 @@ YAML 模型卡片（`realtime/_<provider>/_models/*.yaml`，可用 `custom_yaml_
 ChatAgent 委托执行）、
 `max_context_tokens` / `max_audio_turns` / `max_audio_duration_s` /
 `max_session_duration_s`、`parameter_schema`（可调参数的 JSON Schema，供 UI 展示）、
-`release_date`（模型发布日期，v2.0.12+）。
+`release_date`（模型发布日期，v2.0.12+）、
+`supports_extended_thinking`（是否支持后台扩展思考 + 非阻塞工具 + interactionStatus 完成
+判定，v2.0.12+，Gemini 3.8 Live Extended Thinking）。
 
 ### 自定义 realtime 模型
 
@@ -232,6 +269,10 @@ class MyRealtimeModel(RealtimeModelBase):
                                                    # 默认调 cancel_response
     async def send_delegation_result(              # 可选（v2.0.12+）：回传委托任务结果，
         self, delegation_id, content): ...         # 默认抛 NotImplementedError
+    async def push_tool_result_silently(           # 可选（v2.0.12+）：不打断当前生成的
+        self, block: ToolResultBlock): ...         # 迟到工具结果，默认委托 push_tool_result
+    async def start_turn(self): ...                # 可选（v2.0.12+）：本地 VAD 检测到新
+                                                   # 用户话轮时通知模型，默认 no-op
 ```
 
 `TruncationSupport` 描述被打断话轮的纠正方式：`SERVER`（provider 自纠，`truncate` 空操作）、
@@ -249,12 +290,15 @@ class MyRealtimeModel(RealtimeModelBase):
 `ModelEvent` 基类及 `SessionStartedEvent` / `SessionClosedEvent`（v2.0.12+）、
 `SessionUsageEvent`（累计秒数 + `context_usage_ratio`，v2.0.12+）、
 `SessionEndedEvent`、`SpeechStartedEvent`、`SpeechEndedEvent`、
-`InputTranscriptionEvent`（用户转写）、`ResponseCreatedEvent`、`AudioDeltaEvent`（生成的音频块）、
+`InputTranscriptionEvent`（用户转写）、`InputTranscriptionDeltaEvent`（未定稿的输入转写增量，
+`item_id`/`delta`/`response_id`，v2.0.12+）、`ResponseCreatedEvent`、`AudioDeltaEvent`（生成的音频块）、
 `TranscriptDeltaEvent`（助手转写增量）、`TimelineAudioDeltaEvent` /
 `TimelineTranscriptDeltaEvent`（全双工带时间轴的音频块/字幕，v2.0.12+）、
 `DelegationCreatedEvent`（GPT-Live 委托开始：`delegation_id`/`target`/`response_id`/`offset_ms`，v2.0.12+）、
 `DelegatedResponseEvent`（GPT-Live 委托的嵌套 Responses 事件，v2.0.12+）、
-`ToolCallEvent`、`ResponseDoneEvent`、`ModelErrorEvent`。
+`ToolCallEvent`（v2.0.12+ 新增 `non_blocking: bool`——provider 在继续当前响应的同时立即
+执行该工具，如 Gemini Extended Thinking 的 NON_BLOCKING 工具）、
+`ResponseDoneEvent`、`ModelErrorEvent`。
 
 ## 传输层 (Transport)
 

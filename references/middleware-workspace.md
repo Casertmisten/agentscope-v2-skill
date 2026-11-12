@@ -616,6 +616,10 @@ from agentscope.tool import BackendBase, LocalBackend, ExecResult, DirEntry  # D
 > ℹ️ 普通用 `LocalWorkspace` / `DockerWorkspace` / `E2BWorkspace` 的开发者无需手动构造 Backend——workspace 内部会自行创建。
 > `K8sBackend` / `OpenSandboxBackend` / `DaytonaBackend` / `AppleContainerBackend` / `BubblewrapBackend`
 > 也已对外导出，对应的沙箱 workspace 同理。
+> v2.0.12+：`LocalBackend(workdir: str | None = None)`——传入时 `getcwd()` 返回该目录
+> （构造时解析为绝对路径），`None` 维持旧行为返回进程 `os.getcwd()`；`LocalWorkspace` 内部
+> 即以 `LocalBackend(workdir=self.workdir)` 初始化，使内置 `Glob`/`Grep` 的相对 `path`
+> 以 workspace 目录（而非进程 CWD）为基准。
 
 ### K8sWorkspace — K8s Pod 工作区（v2.0.4+）
 

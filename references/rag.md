@@ -162,6 +162,11 @@ store = QdrantStore(path="./qdrant_data")         # 本地磁盘持久化
 > v2.0.12+ 起 `QdrantStore` 的 `metadata_filter` 支持 `None` 值——映射为 IsNull 条件，
 > 匹配**显式为 null** 的字段（不匹配缺失该键的记录），可与其它谓词 AND 组合；仅 Qdrant
 > 后端，Milvus/MongoDB/ES 行为未变。
+> v2.0.12+ 起 `search()` 的 score 符号按 collection 的**实际** metric 归一——每次检索先
+> `get_collection()` 读 schema：`Cosine`/`Dot` 原样返回相似度，`Euclid`/`Manhattan` 取负
+> （维持 higher-is-better）；构造参数 `distance` 只影响**新建** collection 的 schema，外部重建
+> collection 换 metric 后分数符号不再错（此前按构造参数判断）。命名向量或非 dense
+> `VectorParams` 的 collection 检索抛 `ValueError`（仅支持未命名 dense 向量）。
 
 ## MilvusLiteStore —— 嵌入式向量库后端（v2.0.4+）
 

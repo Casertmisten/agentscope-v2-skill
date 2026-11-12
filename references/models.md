@@ -131,8 +131,53 @@ model = credential.get_chat_model_class()(
     max_retries=3,            # 重试次数
     retry_delay=1.0,          # 重试间隔
     context_size=32768,       # 上下文大小（用于压缩）
+    raise_on_refusal=False,             # v2.0.12+ 拒绝信号 → ContentBlockedError
+    raise_on_content_filter=False,      # v2.0.12+ 内容过滤 → ContentBlockedError
 )
 ```
+
+### 内容拦截错误归一化 ContentBlockedError（v2.0.12+，opt-in）
+
+模型构造参数 `raise_on_refusal` / `raise_on_content_filter`（默认均 `False`，完全向后兼容）
+开启后，provider 的拒绝信号 / 内容过滤异常被归一为统一异常
+`agentscope.exception.ContentBlockedError`（`DeveloperOrientedException` 子类），带结构化字段：
+`phase`（`ContentBlockedPhase.INPUT` / `OUTPUT` / `UNKNOWN`）、`provider`、`original_code`
+（provider 原始错误码/原因，保留大小写）、`request_id`、`partial_output`（流式是否已产出部分内容）、
+`requires_review`（provider 要求人工审查，Agent 禁止自动重试/切 fallback，目前仅
+OpenAI Responses 会置 True）。
+
+```python
+from agentscope.exception import ContentBlockedError, ContentBlockedPhase
+from agentscope.model import OpenAIChatModel
+
+model = OpenAIChatModel(
+    credential=credential, model="gpt-5",
+    raise_on_refusal=True, raise_on_content_filter=True,
+)
+try:
+    res = await model(messages)
+except ContentBlockedError as e:
+    print(e.phase, e.provider, e.original_code, e.request_id, e.partial_output)
+```
+
+各适配器支持矩阵（未列出的开关不可用）：
+
+| 适配器 | `raise_on_refusal` | `raise_on_content_filter` | 识别信号 |
+|---|---|---|---|
+| `OpenAIChatModel` | ✅ | ✅ | SDK code `content_filter`→INPUT；`finish_reason=CONTENT_FILTER`、非空 `refusal`→OUTPUT |
+| `OpenAIResponseModel` | ✅ | ✅ | `incomplete_details.reason=CONTENT_FILTER`→OUTPUT；错误码 `BIO_POLICY`/`MISALIGNMENT_POLICY_VIOLATION`（置 `requires_review`）/`IMAGE_CONTENT_POLICY_VIOLATION`；refusal 内容/流式 refusal 事件 |
+| `AnthropicChatModel` / `MiniMaxChatModel` | ✅ | ❌ | `stop_reason="refusal"`→OUTPUT（流式带 `partial_output`） |
+| `GeminiChatModel` | ❌ | ✅ | `promptFeedback.blockReason`→INPUT；candidate `finishReason`（SAFETY/BLOCKLIST/PROHIBITED_CONTENT/SPII 等）→OUTPUT |
+| `DashScopeChatModel` / `DeepSeekChatModel` / `MoonshotChatModel` | ❌ | ✅ | `finish_reason=CONTENT_FILTER`（DashScope 另识别 `DataInspectionFailed` 错误码） |
+| `VolcengineChatModel` | ❌ | ✅ | 双档错误码表：`*SensitiveContentDetected*` 按输入/输出分 INPUT/OUTPUT |
+
+Agent 侧行为：`ContentBlockedError` **不消耗模型 SDK 重试预算**；INPUT/UNKNOWN 阶段不再以
+同一 payload 重试（记 warning 后 break），仅 OUTPUT 阶段且无部分输出时才在
+`ModelConfig.max_retries` 内重试；`partial_output` 或 `requires_review` 直接上抛。
+`_normalize_exception` 是 `ChatModelBase` 的可覆盖 hook（自定义适配器归一化 SDK 异常的入口）。
+
+> ℹ️ 无关 opt-in 的默认行为变化：`OpenAIChatModel` 在 `message.content` / `delta.content` 为空且
+> 存在非空 `refusal` 字符串时，把 refusal 文本填充为普通 `TextBlock`（此前静默丢弃，流式与非流式一致）。
 
 > ℹ️ 模型清单由各 provider 目录下的 YAML 文件动态加载（`model/_<provider>/_models/*.yaml`），
 > 没有静态 Python 常量。新增模型通常只加 YAML，不改代码。例如 v2.0.5 新增了
@@ -153,6 +198,8 @@ model = credential.get_chat_model_class()(
 > （`thinking_enable` 被忽略、`thinking` 字段被剥离）；`temperature` / `top_p` / `n` / `presence_penalty` /
 > `frequency_penalty` 无论来自 Parameters、调用级还是 `extra_body` 都被静默剥离；`max_tokens` 改名为
 > `max_completion_tokens` 发送；指名工具的 `tool_choice` 改为只发该工具 + `required`。
+> Gemini 新增 `gemini-4-argon` / `gemini-4-carbon` 模型卡（1M 上下文 / 65536 输出，`thinking_level`
+> 替代 budget 思考，见下节）。
 > `ModelCard` 有 `status`（`active` / `deprecated` / `sunset`）与 `deprecated_at` 字段，`list_models()`
 > 不按状态过滤——v2.0.12+ `claude-sonnet-4-5` 标为 `deprecated`（`deprecated_at` 2026-11-30）。
 
@@ -166,7 +213,7 @@ model = credential.get_chat_model_class()(
 | DeepSeek / Moonshot（非 K3） | `extra_body.thinking.type="enabled"` | `"disabled"` | 不发（此前默认发 disabled） |
 | DashScope | `extra_body.enable_thinking=True` | `False` | 不发（此前默认发 False） |
 | Ollama | `think=True` | `think=False` | 不发（此前默认发 False） |
-| Gemini | `thinking_config={include_thoughts: True, thinking_budget: budget or 1024}` | `{include_thoughts: False, thinking_budget: 0}` | 不发（此前默认强制关闭） |
+| Gemini | `thinking_config={include_thoughts: True, thinking_budget: budget or 1024}` | `{include_thoughts: False, thinking_budget: 0}` | 不发（此前默认强制关闭）；⚠️ Gemini 4 Argon/Carbon 上仅控制思维摘要输出（见下节） |
 | Anthropic | budget-based `enabled`（`thinking_mode` 优先级更高） | `thinking={"type": "disabled"}`（此前等同不发） | 不发 |
 | MiniMax | `{"type": "adaptive"}` | `{"type": "disabled"}`（M3 接受、M3.1-Flash 拒绝） | 不发 |
 | OpenAI Chat / Responses | 发 `reasoning_effort`（若设） | `reasoning_effort="none"`（Responses 为 `reasoning={"effort": "none"}`） | 发 `reasoning_effort`（若设） |
@@ -243,6 +290,37 @@ model = AnthropicChatModel(
 > 仅当各层都没给 max_tokens 且 budget ≥ 8192 时自动把 max_tokens 设为 budget + 1024（显式上限不再被改写）。
 > 调用级 `thinking=` 或 `extra_body["thinking"]` 存在时完全跳过自动构建，如
 > `model(msgs, max_tokens=1000, thinking={"type": "disabled"})`。
+
+### Gemini Chat 模型专属参数（v2.0.12+）
+
+`gemini-4-argon` / `gemini-4-carbon` 使用 `thinking_level` 取代 budget 式思考：
+
+```python
+from agentscope.credential import GeminiCredential
+from agentscope.model import GeminiChatModel
+
+model = GeminiChatModel(
+    credential=GeminiCredential(api_key="xxx"),
+    model="gemini-4-argon",
+    parameters=GeminiChatModel.Parameters(
+        thinking_level="high",   # low | medium | high；不设默认 medium（wire 上大写）
+        thinking_enable=True,    # Gemini 4 上仅控制思维摘要（summaries）输出，不控制推理本身
+    ),
+)
+```
+
+Gemini 4（按模型名 `gemini-4-argon` / `gemini-4-carbon` 精确匹配）的专属规则：
+
+- `thinking_budget` 禁用——设置即 `ValueError`（"require thinking_level instead of thinking_budget"）；
+- `temperature` / `top_p` / `top_k` 被静默丢弃并告警（模型不支持，参数不发）；
+- `max_output_tokens > 65536` 抛 `ValueError`（不支持 long decode）；
+- 构造时自动把 `client_kwargs["http_options"]` 的 `timeout` 默认设为 900_000ms（15 分钟，
+  显式传 0 保留）。
+- 反向限制：**非** Gemini 4 模型设置 `thinking_level` 抛 `ValueError`。
+
+> ℹ️ 调用级 kwargs（`model(..., **kwargs)`）新增 camelCase 别名：`thinkingConfig→thinking_config`、
+> `maxOutputTokens→max_output_tokens`、`topP→top_p`、`topK→top_k`；snake/camel 同时提供抛
+> `ValueError`，per-call 值优先于 Parameters 默认。
 
 ### Volcengine Chat 模型（v2.0.8+）
 
@@ -627,10 +705,26 @@ tts = GeminiTTSModel(
 resp = await tts.synthesize(text="Hello")
 ```
 
+v2.0.12+ 新增 `gemini-3.8-flash-tts` / `gemini-3.8-flash-lite-tts` 模型卡（结构化语音）：
+
+- `Parameters.style`（默认 `""`）— 3.8 模型专属的**交付风格指令**（如 `"warm and friendly"`，
+  不朗读出来），随请求以 `speech_metadata.style` 发送；非 3.8 模型设置非空 `style` 抛
+  `ValueError`（"Structured style requires a Gemini 3.8 TTS model."）；
+- `stream` 默认值由 `False` 改为 `True`（`synthesize()` 默认返回增量流，要聚合结果显式传
+  `stream=False`）；流式仍要求 PCM（24kHz 单声道），对外统一封装为 `media_type="audio/wav"`
+  的 `DataBlock`（3.8 非流式直接返回 WAV）；
+- 3.8 模型请求体用 `speechConfig.voice_config: {"voice": ...}`（2.5 保持
+  `{"prebuilt_voice_config": {"voice_name": ...}}`）；Developer API 默认走 `v1beta`
+  （`client_kwargs["http_options"]["api_version"]` 可覆盖）。
+
+> v2.0.12+：`TTSModelBase` 新增 classmethod 钩子 `validate_parameters(model, parameters)`，
+> 构造时自动调用（默认无约束；子类可抛 `ValueError` 拒绝不支持的模型/参数组合，不得做 I/O）——
+> 服务化保存 TTS 配置时同样先校验，非法组合当场报错。
+
 > 各提供商的 TTS 能力：OpenAI 提供 `OpenAITTSModel`（非实时），DashScope 提供
 > `DashScopeTTSModel`（普通）/`DashScopeRealtimeTTSModel`（Qwen3 实时）/`DashScopeCosyVoiceTTSModel`
 > （CosyVoice 普通+实时），Gemini 提供 `GeminiTTSModel`（v2.0.5+，非实时；v2.0.12+ 多个音频候选只取
-> 第一个——候选是互为替代的录音，此前被拼接在一起）；
+> 第一个——候选是互为替代的录音，此前被拼接在一起；同批次新增 3.8 TTS 结构化语音与 `style`）；
 > 其余提供商（Anthropic/Ollama 等）当前不提供 TTS，`get_tts_model_classes()` 返回空列表。
 
 TTS 的核心 API：
