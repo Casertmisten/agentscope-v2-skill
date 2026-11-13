@@ -105,7 +105,8 @@ Skill 按 agent 隔离（`skills/.seed` 模板 + 每 agent 一个分区，惰性
 `purge_agent` 清理，`list/add/remove_skill` 带 `agent_id`，v2.0.6+）、
 终端控制台 console（`launch_console` 交互式终端对话：自动渲染流式回复、处理工具调用 y/n 确认、Ctrl+C 中断当前 reply；
 `ConsoleRenderer` 被动事件渲染器，可嵌入自定义循环消费 `reply_stream`；试运行 / 调试首选入口，无 session 与持久化；
-v2.0.8 `agent` 参数接受 `Agent | PipelineProtocol`）、
+v2.0.8 `agent` 参数接受 `Agent | PipelineProtocol`；v2.0.12+ 原生处理 `AskUser` 外部工具——终端逐题收集答案打包
+`ExternalExecutionResultEvent` 自动回传）、
 Pipeline 流水线（`GoalPipeline` 执行者-校验者目标达成循环：executor 产出执行报告 → verifier 结构化验收
 pass/fail/impossible → fail 带反馈重试至 `max_iters`；支持 HITL 暂停恢复，对外暴露与 Agent 相同的事件流，v2.0.8；
 v2.0.9+ verifier 重试提示以内容块保留多模态目标；v2.0.11+ `max_retries` 结构化输出重试上限真正生效，
@@ -403,6 +404,10 @@ Steering 运行中引导（v2.0.12+）：`SteeringMiddleware(source)` + 进程�
 `POST /chat/` 普通输入改为入队返回 `status="queued"` + `queue_item_id`、session 空闲时 FIFO 出队，
 `/chat/queue*` 端点列出/编辑/删除/重排，`POST /chat/queue/{id}/steer` 把排队项改投运行中的 reply
 （每 session 100 / 每用户 500 上限；自定义 `MessageBus` 需覆盖带默认实现的 `queue_read`/`queue_replace`）、
+客户端外部工具与交互式提问（v2.0.12+）：`POST /chat/` 请求体 `client_builtin_tools=["AskUser"]` 让服务端
+注入 `AskUser` 交互提问、`client_external_tools` 声明 ≤16 个 `client__` 前缀自定义工具由客户端代替执行
+（read_only 决定权限 ALLOW/ASK、与服务端工具同名报错、JSON Schema 2020-12 校验、仅本次 run 生效不持久化；
+console `launch_console` 已原生处理 `AskUser` 终端问答）、
 `thinking_enable` 三态（v2.0.12+）：全部 11 个 chat 适配器统一 `bool | None = None`，`None` 不发送
 思考参数交给 provider 默认——DeepSeek/DashScope/Ollama/Moonshot（非 K3）/Gemini 此前默认**强制关闭**
 思考，要保持旧行为须显式 `False`；Anthropic/MiniMax 的 `False` 改发 `disabled`；OpenAI/xAI 的

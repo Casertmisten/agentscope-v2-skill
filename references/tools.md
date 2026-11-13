@@ -147,6 +147,20 @@ result.metadata = AskUserMetadata(answers=[
 相关导出：`AskUser` / `AskUserParams`（入参 schema）/ `AskUserMetadata` /
 `AskUserAnswer`。权限检查恒返回 `ALLOW`（"不会为提问再提问"）。
 
+驱动方支持（v2.0.12+）：
+
+- **终端 console**：`launch_console` 原生处理 `AskUser`——遇到
+  `RequireExternalExecutionEvent` 时在终端逐题渲染（编号选选项、多选逗号分隔、
+  选 Other 后追加自定义输入），把答案打包成 `ExternalExecutionResultEvent`
+  自动回传继续 reply；同一 reply 的多个挂起请求（确认/提问）按顺序处理。
+  只需把 `AskUser()` 加进 Toolkit 即可（`examples/console`）。
+- **服务化客户端**：`POST /chat/` 请求体声明 `client_builtin_tools: ["AskUser"]`
+  即让服务端为本 run 自动注入 `AskUser()`（最多声明 1 个内置工具），
+  客户端经 SSE 收到调用后在 UI 渲染，结果以 `ExternalExecutionResultEvent` 回传。
+
+> ℹ️ v2.0.12+ 起，`RequireExternalExecutionEvent.tool_calls[].input` 是经 schema
+> 修复与校验后的规范 JSON——外部客户端拿到的与权限检查消费的是同一份，可直接解析。
+
 > ℹ️ 自定义外部工具可声明 `metadata_schema`（JSON Schema）：外部结果回传时 Agent
 > 会先调 `tool.check_external_result(result)` 按 schema 校验 `metadata`，不符抛
 > `jsonschema.ValidationError`，回复保持挂起（parked），执行者修正后可重发；

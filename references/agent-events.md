@@ -177,7 +177,7 @@ context_config = ContextConfig(
 | `ToolResultEndEvent` | 工具结果结束（含 state） |
 | `ExceedMaxItersEvent` | 超过最大迭代次数（v2.0.6+ 已 deprecated，仅为兼容仍发出；改用 `ReplyEndEvent.finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS`） |
 | `RequireUserConfirmEvent` | 需要用户确认（含 tool_calls 列表） |
-| `RequireExternalExecutionEvent` | 需要外部执行（含 tool_calls） |
+| `RequireExternalExecutionEvent` | 需要外部执行（含 tool_calls；v2.0.12+ `tool_call.input` 为经 schema 修复与校验后的规范 JSON，外部执行者可直接解析） |
 | `UserConfirmResultEvent` | 用户确认结果（用于继续回复） |
 | `ExternalExecutionResultEvent` | 外部执行结果（用于继续回复） |
 | `UserInterruptEvent` | 用户中断（用于中止一个 parked reply，v2.0.4+） |

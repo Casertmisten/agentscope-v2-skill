@@ -178,6 +178,8 @@ Agent 侧行为：`ContentBlockedError` **不消耗模型 SDK 重试预算**；I
 
 > ℹ️ 无关 opt-in 的默认行为变化：`OpenAIChatModel` 在 `message.content` / `delta.content` 为空且
 > 存在非空 `refusal` 字符串时，把 refusal 文本填充为普通 `TextBlock`（此前静默丢弃，流式与非流式一致）。
+> `OpenAIResponseModel` 非流式响应 HTTP 200 但 `status="failed"` 时抛 `RuntimeError`（带
+> response id 与错误详情；v2.0.12+，此前会静默解析部分输出）。
 
 > ℹ️ 模型清单由各 provider 目录下的 YAML 文件动态加载（`model/_<provider>/_models/*.yaml`），
 > 没有静态 Python 常量。新增模型通常只加 YAML，不改代码。例如 v2.0.5 新增了

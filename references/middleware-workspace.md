@@ -1251,6 +1251,31 @@ storage = AsyncSQLAlchemyStorage(
   `chat_input_steer_failed`（steering 结果）。
 - 自定义 `MessageBus` 须覆盖 `queue_read` / `queue_replace` 才支持该队列（见上文「消息总线」）。
 
+### 客户端外部工具与交互式提问（v2.0.12+）
+
+`POST /chat/` 请求体新增两个**客户端能力声明**字段，随本次 run 生效（不持久化到
+session，排队 / 调度重试路径均保留）：
+
+- `client_builtin_tools: list["AskUser"]`（≤1 个）——声明客户端支持内置外部工具
+  `AskUser`，服务端为本 run 自动注入 `AskUser()`（见
+  [tools.md](tools.md)「AskUser」节）；无人值守调用方不传即可。
+- `client_external_tools: list[ClientExternalToolDefinition]`（≤16 个）——声明
+  客户端可**代替服务端执行**的自定义工具，agent 发出 external tool call 后由
+  客户端执行、以 `ExternalExecutionResultEvent` 回传结果。每个定义：
+
+  - `name`：必须以 `client__` 前缀开头（`^client__[a-zA-Z0-9_-]+$`，1–64 字符），
+    请求内唯一；与服务端任一工具同名直接报错（fail closed，客户端按名字分发
+    待执行调用，无法安全猜测哪个实现胜出）；
+  - `description`：面向模型的工具描述（1–2000 字符）；
+  - `read_only`（默认 `False`）：`True` → 权限检查恒 `ALLOW`（纯读客户端状态），
+    `False` → 恒 `ASK`（可能改动客户端状态）；
+  - `input_schema`：仅支持 JSON Schema Draft 2020-12、仅本地 `#` 引用（拒绝远程
+    `$ref` 与其他方言）、序列化后 ≤64KB，且必须是带 `properties` 的 object 类型。
+
+> ℹ️ 声明随排队输入存储时宽松解析：排队能力里不合法的定义只记日志并忽略，
+> 不会丢弃整条排队输入。恢复 `ExternalExecutionResultEvent` 时即使本次未声明
+> `AskUser` 也会校验其 `metadata`（禁用工具只约束未来调用，不改变已等待结果的契约）。
+
 ### 后台任务查询 /background-tasks（v2.0.12+）
 
 工具执行超过 `tool_offload_timeout_secs` 被卸载到后台后（占位结果 + 完成后 HintBlock 推送
