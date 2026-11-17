@@ -340,7 +340,10 @@ print(await receipt.wait())   # "injected" / "unconsumed" / "failed"
 - `submit` 在 reply 未开窗（未开始/已结束）或传空列表时抛 `ValueError`；`SteeringQueue`
   非持久、非线程安全。自定义来源（如跨进程总线）继承 `SteeringSource`，实现
   `read` / `acknowledge` / `reject`（`start_reply` / `finish_reply` 有默认空实现）；
-  `SteeringInput(id, messages)` 是一条带来源 id 的输入。
+  v2.0.12+ `acknowledge` 无法确定提交结果（如仅有待处理队列快照）时须抛
+  `SteeringAcknowledgementUncertainError`（自 `agentscope.middleware` 导出）——中间件据此
+  **保留**已注入的 hints（不回滚）再上抛，待 reply 清理后输入可重投；普通异常则保证未提交、
+  hints 回滚。`SteeringInput(id, messages)` 是一条带来源 id 的输入。
 - 服务化场景由 `ChatService` 自动给每个 agent 挂上总线版 `agentscope.app.middleware.SteeringMiddleware`
   （`hint_source="chat_input_steering"`），前端经 `POST /chat/queue/{item_id}/steer` 把排队中的
   输入改投给运行中的 reply，见下文「服务化聊天输入队列」。
@@ -1392,13 +1395,14 @@ OpenSandbox 未设置的 exit code 按失败处理；workspace skill 删除幂�
 
 | 端点 | 用途 |
 |---|---|
-| `GET /voice-profile/available-engines` | 列出当前用户**自有** credential 可用的引擎（`cosyvoice` / `dashscope_tts` / `openai_tts` / `gemini_tts`）及模型卡、是否支持复刻 |
+| `GET /voice-profile/available-engines` | 列出当前用户**自有** credential 可用的引擎（`cosyvoice` / `dashscope_tts` / `openai_tts` / `gemini_tts` / `minimax_tts`，末者 v2.0.13+）及模型卡、是否支持复刻 |
 | `GET /voice-profile/` · `GET /voice-profile/{id}` | 列表 `{profiles, total}` / 单个（不存在 404） |
 | `POST /voice-profile/` · `PATCH /{id}` · `DELETE /{id}` | body `{data: VoiceProfileData}` 创建（201 `{profile_id}`，同名 409）/ 更新 / 删除（204） |
 | `POST /voice-profile/openai-consent` | 上传 OpenAI 说话人授权录音（`audio_base64`、`language` 等）→ `{consent_id}` |
 | `POST /voice-profile/clone` | body `{engine, credential_id, model, audio_base64 \| audio_url, ...}` 调 provider 复刻 → `{voice_id, credential_id}`（**不自动建档**） |
 
-- 只接受用户自有 credential（共享的 403）；音频解码后 ≤ 10 MiB（否则 413）；模型卡
+- 只接受用户自有 credential（共享的 403）；音频解码后 ≤ 10 MiB（`minimax_tts` 引擎放宽到
+  20 MiB，v2.0.13+；否则 413）；模型卡
   `voice_cloning=false` 或 `gemini_tts` 引擎复刻返回 400；SDK `ValueError` → 400、`VoiceCloningError` → 502。
 - `VoiceProfileData(name, engine, model, credential_id, voice, metadata)` / `VoiceProfileRecord`
   自 `agentscope.app.storage` 导出；保存时 engine / credential_id / model / voice 必须非空。

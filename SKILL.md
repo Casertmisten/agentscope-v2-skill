@@ -15,8 +15,8 @@ SteeringMiddleware 运行中追加输入引导 reply，及 on_check_permission
 Workspace 工作区（八种 Workspace 均支持内置工具，Backend 抽象：LocalBackend / DockerBackend / E2BBackend /
 K8sBackend / OpenSandboxBackend / DaytonaBackend / AppleContainerBackend / BubblewrapBackend）、Embedding/TTS 多模态模型
 （Embedding v2.0.3 重构为泛型基类，dimensions 必填 + FileEmbeddingCache 文件缓存；TTS 含 OpenAITTSModel /
-DashScope CosyVoice / GeminiTTSModel（v2.0.12+ 增 3.8 结构化语音 + style 风格指令）等 +
-VoiceCloningClient 语音复刻（v2.0.12+）；ASR 语音转写 agentscope.asr：ASRModelBase 批式/实时双协议 +
+DashScope CosyVoice / GeminiTTSModel（v2.0.12+ 增 3.8 结构化语音 + style 风格指令）/ MiniMaxTTSModel（v2.0.12+）等 +
+VoiceCloningClient 语音复刻（v2.0.12+，v2.0.13+ 增 MiniMax）；ASR 语音转写 agentscope.asr：ASRModelBase 批式/实时双协议 +
 OpenAIASRModel gpt-4o-transcribe，v2.0.11+；DashScopeASRModel / DashScopeRealtimeASRModel，v2.0.12+）、
 thinking_enable 三态思考开关（None 不发送交给 provider 默认，v2.0.12+）、
 内容拦截错误归一化（模型构造参数 raise_on_refusal / raise_on_content_filter → 统一 ContentBlockedError
@@ -71,7 +71,7 @@ TTSMiddleware / ReplyBudgetControlMiddleware / TracingMiddleware OpenTelemetry �
 Mem0Middleware 跨会话长期记忆 / ReMeMiddleware 内嵌 ReMe 长期记忆 / AgenticMemoryMiddleware
 文件系统长期记忆（v2.0.4+）/ RAGMiddleware 检索增强）、工具级洋葱中间件（ToolMiddlewareBase）、
 Embedding/TTS 多模态模型（Embedding v2.0.3 重构为泛型基类，dimensions 为必填契约参数 + 多模态路由 + FileEmbeddingCache 文件缓存；
-TTS 含 OpenAITTSModel / DashScopeTTSModel / DashScopeRealtimeTTSModel / DashScopeCosyVoiceTTSModel / GeminiTTSModel）、
+TTS 含 OpenAITTSModel / DashScopeTTSModel / DashScopeRealtimeTTSModel / DashScopeCosyVoiceTTSModel / GeminiTTSModel / MiniMaxTTSModel），
 RAG 知识库（agentscope.rag：KnowledgeBase + QdrantStore + MilvusLiteStore（v2.0.4+）+ MongoDBStore（v2.0.4+）
 + ElasticsearchStore（v2.0.5+）+ Parser/Chunker 索引管线 + RAGMiddleware static/agentic 双模式
 + LLM 重排序 rerank_model，v2.0.8）、
@@ -155,7 +155,8 @@ GPT-Live 全双工 + Chat Agent 委托）、
 MiniMax 模型（v2.0.9+）：`MiniMaxCredential`（默认国际站 `api.minimax.io/anthropic`，国内换
 `api.minimax.cn/anthropic`）+ `MiniMaxChatModel`（继承 `AnthropicChatModel` 走 Anthropic 兼容端点，
 `thinking_enable` 自适应思考），模型卡 `MiniMax-M3`（默认，1M 上下文 + 图片/视频输入）/
-`MiniMax-M2.7` / `MiniMax-M2.7-highspeed`（204.8k 上下文，纯文本）、
+`MiniMax-M2.7` / `MiniMax-M2.7-highspeed`（204.8k 上下文，纯文本）、v2.0.12+ 同一 credential 增
+`MiniMaxTTSModel`（T2A HTTP API，`speech-01~2.8` 系列输出 MP3）、
 Kimi K2.7 Code 系列模型卡启用图片与视频输入（v2.0.9+）、
 on_reply 中间件可吞掉 `ReplyEndEvent` 续跑回复循环（v2.0.6+，最终 `Msg` 仅在事件逃出中间件链后产生；
 `ExceedMaxItersEvent` 同步 deprecated，改查 `ReplyEndEvent.finished_reason`）、
@@ -423,7 +424,8 @@ Anthropic `enabled` 模式 budget 按有效 max_tokens（extra_body > 调用级 
 自动规范化（v2.0.12+）、`Msg.get_text_content()` 恒返回 `str`（无文本块时为 `""`，此前为 `None`——
 `is None` 判断需改，v2.0.12+）、`ToolResponse.append_chunk` 只按 id 续接 Base64 DataBlock（URL 块与文本
 按到达顺序追加，v2.0.12+）、
-语音复刻（v2.0.12+）：`VoiceCloningClientBase` + `OpenAIVoiceCloningClient` / `DashScopeVoiceCloningClient`
+语音复刻（v2.0.12+）：`VoiceCloningClientBase` + `OpenAIVoiceCloningClient` / `DashScopeVoiceCloningClient` /
+`MiniMaxVoiceCloningClient`（v2.0.13+，MP3/M4A/WAV ≤20MiB，音色 7 天有效）
 （`credential.get_voice_cloning_client_class()`，`TTSModelCard.voice_cloning` 标记支持的模型，OpenAI
 克隆音色传 `voice={"id": voice_id}`）、`TTSMiddleware(continue_on_error=True)` 容错（停用语音继续
 文本并发 `tts_error` 事件）、服务化 `/voice-profile` 音色档案（⚠️ `StorageBase` 新增 4 个 voice profile

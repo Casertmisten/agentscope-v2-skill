@@ -73,7 +73,7 @@ clone_cls = credential.get_voice_cloning_client_class()  # -> Type[VoiceCloningC
 # OpenAI -> OpenAIVoiceCloningClient；DashScope -> DashScopeVoiceCloningClient；其余 None
 ```
 
-> 各提供商支持的能力不同：DashScope 同时支持对话/Embedding/TTS/ASR（ASR 为 v2.0.12+）；OpenAI/Gemini/Ollama 支持 Embedding（`get_embedding_model_class()`）；OpenAI 另提供 ASR（`get_asr_model_classes()`，v2.0.11+）；OpenAI 与 DashScope 提供语音复刻 client（v2.0.12+）；多数提供商的 TTS 列表为空。
+> 各提供商支持的能力不同：DashScope 同时支持对话/Embedding/TTS/ASR（ASR 为 v2.0.12+）；OpenAI/Gemini/Ollama 支持 Embedding（`get_embedding_model_class()`）；OpenAI 另提供 ASR（`get_asr_model_classes()`，v2.0.11+）；OpenAI 与 DashScope 提供语音复刻 client（v2.0.12+）；MiniMax 支持对话 + TTS（v2.0.12+）+ 语音复刻（v2.0.13+）；多数提供商的 TTS 列表为空。
 >
 > v2.0.12+ 起 `list_models()` 合并 `get_chat_model_classes()` 返回的**所有**类的模型卡，
 > 每张 `ModelCard` 新增 `model_class` 字段标识所属模型类（如 `openai_chat` / `openai_response`），
@@ -609,9 +609,11 @@ from agentscope.tts import (
     DashScopeRealtimeTTSModel,         # Qwen3 实时流式输入
     DashScopeCosyVoiceTTSModel,        # CosyVoice 普通/实时（v2.0.4+）
     GeminiTTSModel,                    # Gemini TTS（gemini-2.5-flash/pro-preview-tts，v2.0.5+）
+    MiniMaxTTSModel,                   # MiniMax TTS T2A（speech-01~2.8，v2.0.12+）
     VoiceCloningClientBase,            # v2.0.12+ 语音复刻 client 基类
     OpenAIVoiceCloningClient,          # v2.0.12+
     DashScopeVoiceCloningClient,       # v2.0.12+
+    MiniMaxVoiceCloningClient,         # v2.0.13+
     VoiceCloningError,                 # v2.0.12+ provider 侧复刻失败（RuntimeError 子类）
 )
 ```
@@ -723,11 +725,41 @@ v2.0.12+ 新增 `gemini-3.8-flash-tts` / `gemini-3.8-flash-lite-tts` 模型卡�
 > 构造时自动调用（默认无约束；子类可抛 `ValueError` 拒绝不支持的模型/参数组合，不得做 I/O）——
 > 服务化保存 TTS 配置时同样先校验，非法组合当场报错。
 
+### MiniMaxTTSModel（v2.0.12+）
+
+基于 MiniMax T2A HTTP API 的非实时模型（`realtime=False`），复用已有的 `MiniMaxCredential`
+（`get_tts_model_classes()` 返回 `[MiniMaxTTSModel]`；base_url 自动剥离 `/anthropic` 后缀再拼
+`/v1/t2a_v2`）。模型卡：`speech-01/02/2.6/2.8` 各 `hd`/`turbo` 共 8 个，全部支持语音复刻
+（`voice_cloning=true`），输出恒为 MP3（`audio/mpeg`）。
+
+```python
+from agentscope.credential import MiniMaxCredential
+from agentscope.tts import MiniMaxTTSModel
+
+credential = MiniMaxCredential(api_key="xxx")
+tts = MiniMaxTTSModel(
+    credential=credential,
+    model="speech-2.8-hd",          # 默认
+    parameters=MiniMaxTTSModel.Parameters(
+        voice="English_expressive_narrator",  # 默认音色；复刻音色传 create_voice 返回的 ID
+        speed=1.0, volume=1.0, pitch=0,       # 语速/音量倍率、音调调整
+        sample_rate=32000, bitrate=128000, channel=1,
+        language_boost="auto",       # 语言优化提示；None 不发送
+    ),
+    stream=True,                     # 默认；synthesize() 返回增量流（is_last 标记末块）
+)
+# stream=False：返回单个聚合 TTSResponse；synthesize(**kwargs) 可用 dict 覆盖
+# voice_setting / audio_setting（如 voice={"voice_id": ...}），其余 kwargs 作为顶层请求字段
+resp = await tts.synthesize(text="你好")
+```
+
 > 各提供商的 TTS 能力：OpenAI 提供 `OpenAITTSModel`（非实时），DashScope 提供
 > `DashScopeTTSModel`（普通）/`DashScopeRealtimeTTSModel`（Qwen3 实时）/`DashScopeCosyVoiceTTSModel`
 > （CosyVoice 普通+实时），Gemini 提供 `GeminiTTSModel`（v2.0.5+，非实时；v2.0.12+ 多个音频候选只取
-> 第一个——候选是互为替代的录音，此前被拼接在一起；同批次新增 3.8 TTS 结构化语音与 `style`）；
+> 第一个——候选是互为替代的录音，此前被拼接在一起；同批次新增 3.8 TTS 结构化语音与 `style`），
+> MiniMax 提供 `MiniMaxTTSModel`（v2.0.12+，非实时，T2A HTTP API，输出 MP3）；
 > 其余提供商（Anthropic/Ollama 等）当前不提供 TTS，`get_tts_model_classes()` 返回空列表。
+> v2.0.13+：`TTSModelCard` 新增 `release_date` 字段（各 TTS 模型卡均已标注，webui 按其倒序展示）。
 
 TTS 的核心 API：
 - `synthesize(text)` — 阻塞直到整句合成完成
@@ -768,10 +800,11 @@ TTS 的核心 API：
 TTS 不受影响），经 `credential.get_voice_cloning_client_class()` 获取：
 
 ```python
-from agentscope.credential import OpenAICredential, DashScopeCredential
+from agentscope.credential import OpenAICredential, DashScopeCredential, MiniMaxCredential
 from agentscope.tts import (
     OpenAITTSModel, OpenAIVoiceCloningClient,
     DashScopeCosyVoiceTTSModel, DashScopeVoiceCloningClient,
+    MiniMaxVoiceCloningClient,
 )
 
 # OpenAI：先上传说话人授权录音（须朗读 provider 规定的声明原文），再创建音色
@@ -789,6 +822,13 @@ voice_id = await ds.create_voice(audio_url="https://example.com/sample.mp3",
     parameters=ds.Parameters(target_model="cosyvoice-v3-plus"))
 cosy = DashScopeCosyVoiceTTSModel(credential=..., model="cosyvoice-v3-plus",
     parameters=DashScopeCosyVoiceTTSModel.Parameters(voice=voice_id))
+
+# MiniMax（v2.0.13+）：只收音频字节，两步上传+注册在 client 内完成
+mm = MiniMaxVoiceCloningClient(MiniMaxCredential(api_key="xxx"))
+voice_id = await mm.create_voice(sample_mp3, filename="sample.mp3",
+    parameters=mm.Parameters(prefix="agentscope"))
+tts = MiniMaxTTSModel(credential=..., model="speech-2.8-hd",
+    parameters=MiniMaxTTSModel.Parameters(voice=voice_id))
 ```
 
 - 契约：`create_voice(audio=None, *, filename="voice.wav", audio_url=None, parameters=None) -> str`，
@@ -799,9 +839,14 @@ cosy = DashScopeCosyVoiceTTSModel(credential=..., model="cosyvoice-v3-plus",
   `target_model` 决定注册协议（`cosyvoice-*`/`qwen-audio-*` → `voice-enrollment`，其余 `qwen*` →
   `qwen-voice-enrollment`，`get_enrollment_model(model)` 可查）；`text` 仅用于 Qwen-TTS 注册。
   复刻出的音色须用**同一 credential、同一 target_model** 合成。
+- `MiniMaxVoiceCloningClient.Parameters(prefix="agentscope")`（v2.0.13+，`[A-Za-z][A-Za-z0-9_-]*`
+  ≤223 字符）：生成的 voice_id 为 `{prefix}_{uuid4hex}`。样本仅收 MP3/M4A/WAV 音频字节且
+  ≤ 20 MiB（provider 侧另要求时长 10s~5min）；复刻音色 **7 天内**须用于合成否则过期；
+  不支持 `audio_url`；内容审核不通过抛 `VoiceCloningError`。
 - `TTSModelCard.voice_cloning: bool`（YAML 键 `voice_cloning`）标记支持复刻的模型：
   `gpt-4o-mini-tts`、`cosyvoice-v3-flash/plus`、`cosyvoice-v3.5-flash/plus`（无预置音色，只能用
-  复刻音色）、`qwen-audio-3.0/3.1-tts-flash/plus`。同期 OpenAI 预置音色调整：`tts-1`/`tts-1-hd`
+  复刻音色）、`qwen-audio-3.0/3.1-tts-flash/plus`；v2.0.13+ MiniMax `speech-*` 全系列亦支持。
+  同期 OpenAI 预置音色调整：`tts-1`/`tts-1-hd`
   去掉 `ballad`/`verse`，`gpt-4o-mini-tts` 新增 `marin`/`cedar`。
 - 服务化有 `/voice-profile` 音色档案端点，见 [middleware-workspace.md](middleware-workspace.md)。
 
