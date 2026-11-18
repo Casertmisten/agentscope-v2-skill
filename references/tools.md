@@ -52,6 +52,8 @@ toolkit = Toolkit(tools=[Bash(), Read(), Write(), Edit()])
 > `head_limit`/`offset` 分页，且输出按路径排序（v2.0.8+），翻页顺序稳定。
 > v2.0.10+：glob 参数值形似选项时按字面值匹配（如 `pattern="-foo"` 不再被当成
 > 选项），含 `./` 当前目录段的模式正确处理。
+> v2.0.13+：`pattern` 中的 `..` 段解析为父目录（此前被静默丢弃），symlink 交由
+> 文件系统解析。
 > v2.0.12+：`Glob` 外部 helper 输出非法（非 JSON 字符串数组）时返回 `ERROR` 结果
 > 而非误导性的空结果；`Grep` 空行是合法匹配记录、多行匹配文本与文件内容逐字一致
 > （可直接作 `Edit` 的 `old_string`）。
@@ -120,7 +122,8 @@ toolkit = Toolkit(tools=[Bash(), AskUser()])
 - 每题可带 `header`（≤12 字符的短标签，渲染成 chip）与 `context`（用户作答时
   需参照的草稿 / diff / 报错原文，展示在选项上方，别塞进问题文本里）；
 - 选项可带 `preview`（聚焦该选项时渲染的对比内容：代码片段 / ASCII 草图 / 配置
-  示例，仅单选题支持）；`multi_select=True` 允许多选；
+  示例，仅单选题支持）；`multi_select=True` 允许多选（v2.0.13+ 多选题带 `preview`
+  起参数校验强制——直接抛 `ValidationError`）；
 - "Other" 自由输入由前端自动提供，模型不需要（也不应）自己加 Other 选项；
 - 推荐某选项时把它放第一位并在 label 后加 "(Recommended)"。
 

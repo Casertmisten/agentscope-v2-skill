@@ -634,7 +634,7 @@ from agentscope.tool import BackendBase, LocalBackend, ExecResult, DirEntry  # D
 from agentscope.workspace import K8sWorkspace
 
 workspace = K8sWorkspace(
-    workspace_id=None,                # None 时自动生成;给定则按 label 复用已有 Pod
+    workspace_id=None,                # None 时自动生成;给定则按名字复用已有 Pod(校验身份归属)
     kubeconfig=None,                  # None 用集群内 ServiceAccount;本地开发传 ~/.kube/config 路径
     namespace="agentscope",           # 目标命名空间
     image="python:3.11-slim",         # Pod 镜像
@@ -656,8 +656,11 @@ workspace = K8sWorkspace(
 ```
 
 关键点:
-- PVC 名固定为 `as-ws-{workspace_id}`,挂载到 `/workspace`,Pod 被删/重建后数据仍在。
-- `initialize()` 按 label `agentscope.workspace.id` 查找 Pod:Running 则复用,Failed/Unknown 则重建。
+- Pod/PVC 同名,为 `as-ws-{workspace_id 小写净化}-{sha256 前 16 位}`（v2.0.13+ 加哈希后缀防
+  不同 ID 净化后同名冲突），挂载到 `/workspace`,Pod 被删/重建后数据仍在；initialize 时若存在
+  旧命名（无哈希）的资源且身份归属匹配则继续沿用，新旧同时存在时报错提示先清理。
+- `initialize()` 按名字查找 Pod 并校验其 workspace 身份（annotation/label
+  `agentscope.workspace.id` 必须精确匹配,防同名资源被误接管）:Running 则复用,Failed/Unknown 则重建。
 - `close()` 删 Pod;`delete_pvc_on_close=True` 才会连 PVC 一起删。
 - bootstrap 阶段会在 Pod 内安装 `ripgrep`/`uv`/`curl` 并建 venv,首次启动较慢。
 

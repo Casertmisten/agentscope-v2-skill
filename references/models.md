@@ -700,7 +700,7 @@ from agentscope.tts import GeminiTTSModel
 credential = GeminiCredential(api_key="xxx")
 tts = GeminiTTSModel(
     credential=credential,
-    model="gemini-2.5-flash-preview-tts",   # 或 gemini-2.5-pro-preview-tts
+    model="gemini-3.8-flash-tts",   # v2.0.13+ 默认值；或 gemini-3.8-flash-lite-tts 等
     parameters=GeminiTTSModel.Parameters(
         voice="Kore",         # Gemini 预置音色名
     ),
@@ -708,6 +708,10 @@ tts = GeminiTTSModel(
 )
 resp = await tts.synthesize(text="Hello")
 ```
+
+> ⚠️ v2.0.13+ 起 `model` 默认值由 `gemini-2.5-flash-preview-tts` 改为
+> `gemini-3.8-flash-tts`（原默认模型已停止服务）；两个 2.5 preview 模型卡标记为
+> `deprecated`（不早于 2026-12-18 关停），仍可显式指定使用。
 
 v2.0.12+ 新增 `gemini-3.8-flash-tts` / `gemini-3.8-flash-lite-tts` 模型卡（结构化语音）：
 
