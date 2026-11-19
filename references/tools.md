@@ -420,7 +420,21 @@ stdio_client = MCPClient(
     mcp_config=StdioMCPConfig(command="mcp-server-filesystem"),
 )
 await stdio_client.connect()
+
+# v2.0.13+：不信任服务器自报告的工具注解（默认 True）
+untrusted = MCPClient(
+    name="db",
+    is_stateful=False,
+    mcp_config=HttpMCPConfig(url="https://db.example.com/mcp"),
+    trust_annotations=False,
+)
 ```
+
+> ⚠️ **`trust_annotations` 与只读注解**（v2.0.13+）：MCP 工具的 `readOnlyHint` 注解由服务器
+> **自报告**，带该注解的工具会被权限引擎在**所有模式**（含 DEFAULT/DONT_ASK/EXPLORE）自动
+> 放行。不完全信任的服务器应设 `trust_annotations=False`——此时 `readOnlyHint` 被忽略，工具
+> 回落到普通工具的权限判定（DEFAULT→ASK、DONT_ASK/EXPLORE→DENY，用户显式 ALLOW 规则仍
+> 生效）。设置随 `model_dump` 序列化，workspace 恢复后不会静默恢复信任。
 
 ### MCPClient 方法
 
@@ -441,6 +455,7 @@ raw = await client.list_raw_tools() # 获取原始 mcp.types.Tool
 > ℹ️ 工具目录按客户端缓存：收到服务端 `tools/list_changed` 通知即失效，下一次
 > `get_tool`/`list_tools` 自动重新拉取（v2.0.12+，调用方无需干预；此前后台增删工具
 > 客户端一直用旧 schema）。极少数 discovery 与通知连续竞态会抛 `RuntimeError`，重试即可。
+> v2.0.13+ 起运行时 headers 实际变化同样失效缓存（见下节），已返回的工具保持原 schema。
 
 ### 运行时 headers（v2.0.8+）
 
@@ -453,6 +468,9 @@ await client.set_runtime_headers({"authorization": "Bearer <new-token>"})
 ```
 
 - 下一次出站请求即生效，无需重连；进行中的调用与已建立的长 GET 流不受影响。
+- v2.0.13+ 起 headers **实际变化**（与原 headers 合并结果不同）会让缓存的工具目录失效，
+  下一次 `get_tool`/`list_tools` 重新发现；发现过程中 headers 再变则重试一次，仍被失效
+  抛 `RuntimeError`。
 - MCP 自身按请求设置的 headers（`mcp-session-id`、`content-type` 等）始终优先；
   httpx2 从 URL / body 派生的保留头（`connection` / `content-length` / `host` /
   `transfer-encoding`）会被直接拒绝（`ValueError`）。

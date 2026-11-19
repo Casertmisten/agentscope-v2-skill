@@ -926,6 +926,9 @@ asr = DashScopeASRModel(
     ),
 )
 resp = await asr.transcribe(audio_bytes, filename="meeting.mp3")   # 按扩展名定格式
+# v2.0.13+：kwargs 传 model= 覆盖仅对该次调用生效（同时用于参数过滤与请求分发）
+resp = await asr.transcribe(audio_bytes, filename="meeting.mp3",
+                            model="qwen-audio-3.0-asr-flash")
 
 # 实时：默认 qwen-audio-3.1-asr-flash-streaming，输入 PCM16（需 agentscope[realtime] 的 websockets）
 rt = DashScopeRealtimeASRModel(

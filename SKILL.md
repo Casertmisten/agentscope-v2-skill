@@ -480,7 +480,17 @@ classmethod 构造期校验钩子；`GeminiTTSModel` `stream` 默认 False→Tru
 为基准）；QdrantStore `search()` score 符号按 collection 实际 metric 归一（构造参数 `distance`
 只管新建 collection；命名向量/非 dense 抛 `ValueError`）；Gemini formatter 失败工具结果发
 `error` 键（成功仍 `output`）；schema 引导修复检测到嵌套参数被丢弃时整体回退原始解析结果。
-AgentScope 2.0.11 已正式发布，main 进入 2.0.12dev。
+MCP 工具注解信任开关（v2.0.13+）：`MCPClient` 构造参数 `trust_annotations`（默认 `True`）设
+`False` 时忽略服务器自报告的 `readOnlyHint`——该注解会让工具在**所有**权限模式自动放行，
+不完全信任的服务器应关闭；关闭后回落普通工具判定（DEFAULT→ASK、DONT_ASK/EXPLORE→DENY，
+显式 ALLOW 规则仍生效），设置随 `model_dump` 序列化。
+`set_runtime_headers` 实际变化即失效缓存的工具目录（重新拉取，已返回工具保持原 schema；
+发现期间 headers 再变重试一次后 `RuntimeError`）、`DashScopeASRModel.transcribe(model=...)`
+调用级模型覆盖真正生效（仅本次调用，同时用于 unsupported 参数过滤）、
+MilvusLite/MongoDB/Elasticsearch 的 `metadata_filter` 遇 `None` 值抛错拒绝（无法区分显式
+null 与缺失键；Qdrant 仍支持 IsNull）、模型卡 yaml 的 null `parameter_overrides` 作为删除
+标记应用后不再保留。
+AgentScope 2.0.12 已正式发布，main 进入 2.0.13dev。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
 
