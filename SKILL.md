@@ -490,6 +490,17 @@ MCP 工具注解信任开关（v2.0.13+）：`MCPClient` 构造参数 `trust_ann
 MilvusLite/MongoDB/Elasticsearch 的 `metadata_filter` 遇 `None` 值抛错拒绝（无法区分显式
 null 与缺失键；Qdrant 仍支持 IsNull）、模型卡 yaml 的 null `parameter_overrides` 作为删除
 标记应用后不再保留。
+Channel 审批卡安全化（v2.0.13+）：确认卡片改携带不透明审批令牌 `approval_id`，服务端持久化
+`ChannelApprovalRecord`（channel/chat/agent/session/reply/tool_call/requester 七元组）作为权威
+路由与授权数据——点击者须为记录的 requester（不一致 UNAUTHORIZED 且 pending 保留）、一次性
+claim 锁防双击，结果以 `ChannelDecisionStatus`（AUTHORIZED/ACCEPTED/UNAUTHORIZED/STALE/
+ERROR）返回；`ChannelConfirmationResultEvent` 字段相应简化，新增只读探测事件
+`ChannelAuthConfirmationResultEvent`。gateway 代理的 `set_runtime_headers` 每次成功更新都失效
+工具目录（含等价更新，与直连版「实际变化才失效」不同）；`MCPClient.close()` 清空缓存工具目录
+（重连后重新发现）；`RoutingConfig.bindings` 必填（不可存成不可路由状态）；`PPTParser` 的
+`slide_prefix`/`slide_suffix` 只装饰真实文本块（无文本幻灯片不再产出 wrapper-only Section）；
+服务化索引 worker 按 embedding 模型能力过滤——非多模态模型丢弃 DataBlock chunks 仅索引文本
+（纯图文档报错）、PDF 无可索引文本报错并提示扫描件先 OCR。
 AgentScope 2.0.12 已正式发布，main 进入 2.0.13dev。
 
 **安装**：`pip install agentscope`（Python >= 3.11）

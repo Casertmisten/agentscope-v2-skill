@@ -964,7 +964,10 @@ await workspace.purge_session(agent_id=agent_id, session_id=session_id)
 
 **运行时 headers（v2.0.8+）**：容器/云沙箱 workspace（Docker/E2B/sandbox 等，MCP 经网关代理）
 中的 live MCP 客户端同样支持 `set_runtime_headers()`（需先 `connect()`，否则 `RuntimeError`）；
-`connect()` 注册时会随请求一并携带运行时 headers，因此断线重连后仍然生效。
+`connect()` 注册时会随请求一并携带运行时 headers，因此断线重连后仍然生效。v2.0.13+ 每次成功
+更新都会失效代理缓存的工具目录（**含与现值等价的更新**——新列出的代理无法得知 gateway 上哪些
+运行时覆盖已激活，与直连 MCPClient「实际变化才失效」不同）；发现期间 headers 再变则重试一次，
+仍被失效抛 `RuntimeError`。
 
 > 服务化路由的 MCP 端点（`/workspace/mcp/...`）已自动带 `agent_id`/`session_id`；
 > `add_mcp` 重名时返回 **HTTP 409 Conflict**。
@@ -1139,6 +1142,10 @@ BlobStore 负责保存上传文档原始字节，直到索引 worker 读取并�
 
 `enable_index_worker=False` 用于 API 与索引 worker 分离的部署。独立 worker 从 `agentscope.app.rag`
 导入 `run_worker`，复用同一组 storage/message_bus/knowledge_base_manager/blob_store/parser/chunker 配置。
+
+索引 worker 按 embedding 模型能力过滤内容（v2.0.13+）：模型不支持多模态（`supports_multimodal=False`）
+时丢弃 DataBlock chunks 仅索引文本 chunks（重新编号；纯图无文本的文档报错"需要多模态 embedding
+模型"）；PDF 切分后无任何可索引文本同样报错，并提示扫描件应先 OCR 再上传。
 
 ### 消息总线（MessageBus）
 
@@ -1527,7 +1534,8 @@ ChannelBinding(
     session_scope=SessionScope.PER_CHAT,   # 会话分组粒度
 )
 
-# 路由配置：有序规则列表，首条命中生效；末条必须是 catch-all
+# 路由配置：有序规则列表，首条命中生效；末条必须是 catch-all（v2.0.13+ bindings 必填——
+# 缺失/为空直接校验失败，频道记录不能存成不可路由状态）
 RoutingConfig(bindings=[..., ChannelBinding(match_value="*", agent_id="默认agent")])
 
 # 派生会话设置
@@ -1556,7 +1564,7 @@ IM 平台 ──消息──▶ Channel(适配器) ──emit──▶ ChannelGa
 
 - **`ChannelGateway`**（入站）：`process(event)` 是唯一入口。消息 → 路由到 `(agent_id, session_id)`
   并入队为一个 run（空闲时是新的 user turn；运行中则注入为 `HintBlock` inbox 提示）。卡片点击 →
-  从 session state 读权威的待审批工具调用并 resume run。**不收集也不发送回复**。
+  校验审批令牌后从 session state 读权威的待审批工具调用并 resume run。**不收集也不发送回复**。
 - **`ChannelLifecycleDispatcher`**（出站 + 生命周期）：每节点一个，把本节点的活跃适配器集合
   与 storage 对账（lifecycle 通知 + 定期 sweep 自愈）。它还订阅每个频道相关 run 的事件流，
   无缝地（先订阅、再回放日志、按 `entry_id` 去重）喂给本地 channel 的 `send_response`——
@@ -1569,11 +1577,18 @@ IM 平台 ──消息──▶ Channel(适配器) ──emit──▶ ChannelGa
 
 频道会话默认 `permission_mode="default"`。当一个工具调用需要用户确认（`RequireUserConfirmEvent`）时：
 
-1. channel 在平台上渲染一张**确认卡片**（飞书 interactive card / Discord button），卡片上**钉住**
-   当时的 `(agent_id, session_id, tool_call_id)`。
-2. 用户点击 → channel 发出 `ChannelConfirmationResultEvent`，经同一 gateway 入口。
-3. gateway 优先用卡片上钉定的目标（而非重新路由），从 session state 读**权威的**待审批工具调用，
-   resume 那个 run。过期的/重复的点击找不到 ASKING 状态的工具调用，自然幂等忽略。
+1. 出站转发层先在服务端持久化审批记录 `ChannelApprovalRecord`（钉住 channel / chat / agent /
+   session / reply / tool_call / **发起者 requester** 七元组，v2.0.13+），channel 再在平台上渲染
+   一张**确认卡片**（飞书 interactive card / Discord button）——卡片只携带一个**不透明审批令牌**
+   `approval_id`，不含可伪造的路由信息（此前卡片直接钉住 `(agent_id, session_id, tool_call_id)`）。
+2. 用户点击 → channel 发出 `ChannelConfirmationResultEvent`（v2.0.13+ 仅带 `approval_id` 等
+   查找键），经同一 gateway 入口；路由与授权数据一律以服务端记录为准，不信任回传 payload。
+3. gateway 校验记录归属（channel/chat）与**点击者身份**——须为记录的 requester，否则
+   UNAUTHORIZED 且 pending 保留待原发起者操作；另以一次性 claim 锁防双击重复入队。通过后
+   （ACCEPTED）从 session state 读**权威的**待审批工具调用 resume 那个 run；缺失/过期/已被
+   认领的点击为 STALE。处理结果以 `ChannelDecisionStatus`（AUTHORIZED / ACCEPTED /
+   UNAUTHORIZED / STALE / ERROR）返回——`ChannelBase.start()` 的 emit 回调 v2.0.13+ 返回
+   该状态，另有只读探测事件 `ChannelAuthConfirmationResultEvent`（校验但不认领、不 resume）。
 
 ### channel 暴露给 agent 的工具
 

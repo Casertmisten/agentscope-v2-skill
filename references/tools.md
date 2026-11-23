@@ -455,7 +455,8 @@ raw = await client.list_raw_tools() # 获取原始 mcp.types.Tool
 > ℹ️ 工具目录按客户端缓存：收到服务端 `tools/list_changed` 通知即失效，下一次
 > `get_tool`/`list_tools` 自动重新拉取（v2.0.12+，调用方无需干预；此前后台增删工具
 > 客户端一直用旧 schema）。极少数 discovery 与通知连续竞态会抛 `RuntimeError`，重试即可。
-> v2.0.13+ 起运行时 headers 实际变化同样失效缓存（见下节），已返回的工具保持原 schema。
+> v2.0.13+ 起运行时 headers 实际变化同样失效缓存（见下节），已返回的工具保持原 schema；
+> 连接关闭（`close()`）也清空缓存，重连后重新发现（此前重连沿用旧目录）。
 
 ### 运行时 headers（v2.0.8+）
 
