@@ -500,7 +500,10 @@ ERROR）返回；`ChannelConfirmationResultEvent` 字段相应简化，新增只
 （重连后重新发现）；`RoutingConfig.bindings` 必填（不可存成不可路由状态）；`PPTParser` 的
 `slide_prefix`/`slide_suffix` 只装饰真实文本块（无文本幻灯片不再产出 wrapper-only Section）；
 服务化索引 worker 按 embedding 模型能力过滤——非多模态模型丢弃 DataBlock chunks 仅索引文本
-（纯图文档报错）、PDF 无可索引文本报错并提示扫描件先 OCR。
+（纯图文档报错）、PDF 无可索引文本报错并提示扫描件先 OCR；`WordParser` 文本框内图片只读一次
+（`mc:AlternateContent` 的 DrawingML/VML 双分支是同一内容的副本，只取首个含图片的分支）；
+DashScope CosyVoice/Realtime TTS 的 `max_retries` 修正为「初始尝试后的重试次数」——默认 3 即
+最多共 4 次尝试，设 0 也会执行一次合成（此前 0 次都不执行）。
 AgentScope 2.0.12 已正式发布，main 进入 2.0.13dev。
 
 **安装**：`pip install agentscope`（Python >= 3.11）
