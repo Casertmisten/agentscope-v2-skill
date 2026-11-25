@@ -972,6 +972,18 @@ await workspace.purge_session(agent_id=agent_id, session_id=session_id)
 > 服务化路由的 MCP 端点（`/workspace/mcp/...`）已自动带 `agent_id`/`session_id`；
 > `add_mcp` 重名时返回 **HTTP 409 Conflict**。
 
+**stdio MCP 命令允许列表（v2.0.13+）**：stdio MCP 会让服务端把 `command` 作为本地进程拉起，
+网络可达的部署上不限量的注册等于以服务 OS 用户远程执行代码。`create_app` 的
+`allowed_stdio_commands` 参数（`list[str] | None`）就是这条面的闸门：
+
+- `None`（默认）：不限制，保持旧行为。
+- 非空列表：条目**精确匹配**（含路径，不做 basename/路径归一化），按你会输入的样子列
+  `"npx"`、`"uvx"`。`POST /workspace/mcp` 直接注册被拒命令返回 **403**；
+  `POST /workspace/mcp/from-library`（含 hub card 安装的）把被拒条目报在响应 `failed` 里，
+  其余条目继续处理。
+- `[]`：经这两条路由的新增 stdio MCP 全部拒绝。
+- 已在 workspace 里的条目与 `default_mcps` 种子是运维定义的，不在检查范围内。
+
 ### Skill 隔离与生命周期（v2.0.6+）
 
 Skill 可被 agent 原地编辑（改进自己的技能），因此与 MCP 一样需要隔离——**每个 agent 拥有独立的
@@ -1070,6 +1082,7 @@ app = create_app(
     enable_scheduler=True,                 # 是否启用定时任务调度（v2.0.8+）
     download_secret=None,                  # 下载令牌签名密钥（v2.0.8+，缺省自动生成）
     realtime_ice_servers=None,             # 浏览器 WebRTC ICE servers（v2.0.10+，供 GET /realtime/config）
+    allowed_stdio_commands=None,           # stdio MCP 命令允许列表（v2.0.13+，见 MCP 隔离一节）
 )
 
 # 独立运行
@@ -1084,7 +1097,7 @@ root.mount("/agentscope", app)
 > `knowledge_parsers` / `knowledge_chunkers` / `blob_store` / `enable_index_worker` / `mcp_hubs` /
 > `skill_hubs` 位于 `*` 之前（可按位置传参）；`enable_channel_worker` / `enable_scheduler` /
 > `extra_*` / `tool_offload_timeout_secs` / `custom_*` / `channels` / `resource_access_policy` / `download_secret` /
-> `realtime_ice_servers` / `title` / `version` 均为**仅关键字参数**。推荐全部用关键字传参。
+> `realtime_ice_servers` / `allowed_stdio_commands` / `title` / `version` 均为**仅关键字参数**。推荐全部用关键字传参。
 > 旧参数名 `knowledge_chunker`（传实例）已 deprecated，传入仅取其类并告警，请改用 `knowledge_chunkers`。
 >
 > 注意区分两类 middleware 参数：
@@ -1469,6 +1482,11 @@ OpenSandbox 未设置的 exit code 按失败处理；workspace skill 删除幂�
 # GET /workspace/files?token=...   （带 token 时无需 X-User-ID header）
 # 或 GET /workspace/files  + X-User-ID header（直接鉴权）
 ```
+
+- v2.0.13+ 起只有白名单媒体类型（text/plain、text/markdown、application/pdf、五种光栅图格式
+  ——png/jpeg/gif/webp/bmp，外加 application/json）会以 inline 方式供浏览器预览；其余
+  （尤其可执行脚本的 text/html、image/svg+xml）一律强制 `Content-Disposition: attachment`
+  下载并附 `X-Content-Type-Options: nosniff`，防止构造的上传文件在应用 origin 内跑脚本。
 
 - `DirectoryListing`（v2.0.6+，`path` + `entries`）取代原先裸 `DirectoryEntry` 列表，`entries` 中的
   `DirectoryEntry`（`name` / `is_dir` / `size_bytes` / `updated_at`）由 workspace 后端的

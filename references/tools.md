@@ -77,6 +77,13 @@ toolkit = Toolkit(tools=[Bash(), Read(), Write(), Edit()])
 > 相对路径拼到 `backend.getcwd()` 上（保留 `..` 交文件系统解析 symlink），此前以 Python 进程
 > CWD 为基准（Docker/E2B 等容器后端语义不变）。
 
+> ℹ️ `Bash` / `PowerShell` v2.0.13+ 构造参数 `max_output_chars`（`int | None`，默认 30000，
+> 正整数否则 `ValueError`）：返回给 agent 的命令输出字符上限。超限截断时提示**放在开头**——
+> 给出原始长度并建议把输出写入文件再按需读取（agent 能意识到结果不完整；提示在前也是因为
+> agent 侧 `tool_result_limit` 之类后续截断同样只保留头部）；命令失败消息（回显命令 + stdout/stderr）
+> 整体受同一上限约束。`None` 则完全不截断，把限制交给 agent 的 `ContextConfig.tool_result_limit`
+> （配合 offloader 把超长部分卸载到 workspace）。
+
 ### PowerShell 工具（v2.0.5+，Windows）
 
 `PowerShell` 是与 `Bash` 平级的 `ToolBase` 子类，用于 Windows 环境。探针优先 `pwsh` 后

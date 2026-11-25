@@ -504,6 +504,14 @@ ERROR）返回；`ChannelConfirmationResultEvent` 字段相应简化，新增只
 （`mc:AlternateContent` 的 DrawingML/VML 双分支是同一内容的副本，只取首个含图片的分支）；
 DashScope CosyVoice/Realtime TTS 的 `max_retries` 修正为「初始尝试后的重试次数」——默认 3 即
 最多共 4 次尝试，设 0 也会执行一次合成（此前 0 次都不执行）。
+服务化 stdio MCP 命令允许列表（v2.0.13+）：`create_app(allowed_stdio_commands=...)`——stdio MCP
+会把 `command` 拉起为本地进程，网络可达部署上不设限等于远程代码执行。`None`（默认）不限制；
+列表精确匹配（含路径），直接注册被拒 403、from-library（含 hub card）被拒条目报 `failed`；
+`[]` 全禁。已有 workspace 条目与 `default_mcps` 不受影响。`Bash`/`PowerShell` 构造参数
+`max_output_chars`（默认 30000，`None` 不截断交给 `tool_result_limit`）——超限截断提示放开头
+（给原始长度与写文件建议）；服务化 `GET /workspace/files` 只白名单媒体类型内联预览
+（含 application/json，text/html/SVG 强制下载 + nosniff）；`WordParser` 修订跟踪删除/移走
+的内容全面跳过（表格单元格文本/换行、图片，删除段落标记的段落不算空行）。
 AgentScope 2.0.12 已正式发布，main 进入 2.0.13dev。
 
 **安装**：`pip install agentscope`（Python >= 3.11）

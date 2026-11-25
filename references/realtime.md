@@ -298,7 +298,9 @@ class MyRealtimeModel(RealtimeModelBase):
 `DelegatedResponseEvent`（GPT-Live 委托的嵌套 Responses 事件，v2.0.12+）、
 `ToolCallEvent`（v2.0.12+ 新增 `non_blocking: bool`——provider 在继续当前响应的同时立即
 执行该工具，如 Gemini Extended Thinking 的 NON_BLOCKING 工具）、
-`ResponseDoneEvent`、`ModelErrorEvent`。
+`ResponseDoneEvent`、`ModelErrorEvent`（v2.0.13+ 新增可选 `response` 字段——错误限定于单个
+回复时携带其终态 `ResponseDoneEvent`，如 xAI `response.done` 带 `status=failed` 时映射为
+`ModelErrorEvent` 并由 `RealtimeAgent` 以 ERROR 结束该 reply）。
 
 ## 传输层 (Transport)
 

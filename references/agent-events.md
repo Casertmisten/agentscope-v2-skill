@@ -173,7 +173,7 @@ context_config = ContextConfig(
 | `ToolCallEndEvent` | 工具调用结束 |
 | `ToolResultStartEvent` | 工具结果开始 |
 | `ToolResultTextDeltaEvent` | 工具结果文本增量 |
-| `ToolResultDataDeltaEvent` | 工具结果数据增量 |
+| `ToolResultDataDeltaEvent` | 工具结果数据增量（v2.0.13+ 含 `name`——工具结果数据块的文件名，事件重放重建 reply 时保持与原工具结果一致） |
 | `ToolResultEndEvent` | 工具结果结束（含 state） |
 | `ExceedMaxItersEvent` | 超过最大迭代次数（v2.0.6+ 已 deprecated，仅为兼容仍发出；改用 `ReplyEndEvent.finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS`） |
 | `RequireUserConfirmEvent` | 需要用户确认（含 tool_calls 列表） |
