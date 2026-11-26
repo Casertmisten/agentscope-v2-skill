@@ -1158,7 +1158,8 @@ BlobStore 负责保存上传文档原始字节，直到索引 worker 读取并�
 
 索引 worker 按 embedding 模型能力过滤内容（v2.0.13+）：模型不支持多模态（`supports_multimodal=False`）
 时丢弃 DataBlock chunks 仅索引文本 chunks（重新编号；纯图无文本的文档报错"需要多模态 embedding
-模型"）；PDF 切分后无任何可索引文本同样报错，并提示扫描件应先 OCR 再上传。
+模型"）；任何类型的文档切分后无任何 chunks 都按索引失败报错（PDF 的报错信息额外提示扫描件应先
+OCR 再上传——其余类型报"无可索引内容"）。
 
 ### 消息总线（MessageBus）
 
@@ -1476,7 +1477,9 @@ OpenSandbox 未设置的 exit code 按失败处理；workspace skill 删除幂�
 # 3. 申请一次性下载 token（浏览器原生下载无法带自定义 header，故用 URL 里的能力令牌）
 # POST /workspace/files/download-token
 #      {agent_id, session_id, path}  ->  {token, expires_at}
-# token 默认 60s 有效，HMAC 签名绑定 (expires_at, user_id, path) 三元组，仅限该 path。
+# token 默认 60s 有效，HMAC 签名绑定 (expires_at, user_id, agent_id, session_id, path)
+# ——scope 为 workspace/{agent_id}/{session_id}/{path}（v2.0.13+ 起绑定 agent+session，
+# 此前只绑 path：一个 session 的 token 可被重放到同一用户的另一 session）。
 
 # 4. 下载文件
 # GET /workspace/files?token=...   （带 token 时无需 X-User-ID header）
@@ -1925,6 +1928,13 @@ v2.0.6+ 起，`GET /sessions`（列表）返回的每个 `SessionView` 也直接
 > （缓存了它读过的每个文件）一律清空——否则列出 20 个 session 就要传输 20 份完整记录。
 > `permission_context` / `tasks_context` 因体量小而保留，前端面板可据此初始化。
 > 读取某 session 的消息请走 `GET /sessions/{id}/messages`。
+
+v2.0.13+ 起列表支持服务端分页：`GET /sessions?limit=20&offset=0`（`limit` 1–200，省略则返回全部；
+`offset` 从最新往旧跳过）。`total` 字段相应修正为**匹配总数**（此前错误地等于当前页条数），
+排序按 `(created_at, id)` 新→旧（时间戳相同的平局由 id 打破，不再依赖存储遍历顺序）。SQL 后端
+的分页投影在数据库内完成（新增 `session_list` 索引表 + Alembic `0006`），不再为排序加载全部
+session 完整 payload；其余存储后端沿用 `StorageBase.list_sessions_page` 的默认实现（全量取回后
+裁剪、切片），自定义存储后端自动继承。
 
 ### Session 工作目录（cwd，v2.0.6+）
 

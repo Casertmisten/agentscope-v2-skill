@@ -90,7 +90,7 @@ workspace 产物文件读取与状态端点（`GET /workspace/directories` 返�
 `GET /workspace/status` 返回 `WorkspaceStatus`（workdir + cwd + `GitStatus`） / `/workspace/files` + download-token，
 背后统一收敛到 `WorkspaceService` 服务层，v2.0.6+）、
 Session 工作目录（`SessionConfig.cwd` 锚点 + `GET /workspace/status` git 状态，v2.0.6+）、
-`GET /sessions` 返回的 `SessionView` 内联 `status` 字段并裁剪 `context/summary/tool_context`（`is_running` deprecated，v2.0.6+）、
+`GET /sessions` 返回的 `SessionView` 内联 `status` 字段并裁剪 `context/summary/tool_context`（`is_running` deprecated，v2.0.6+；v2.0.13+ 支持 `limit`/`offset` 服务端分页、`total` 为匹配总数、排序 `(created_at, id)` 确定性）、
 `PATCH /sessions/{id}` 在 run 持有 session 时返回 409（v2.0.6+）、
 `extra_agent_middlewares` 工厂新增第四个 `workspace` 参数（旧三参数继续兼容，v2.0.6+）、
 `cur_iter` 轮次计数修复（一轮仅在全部 tool call 拿到结果后才计数，新增 `AgentState.get_unfinished_tool_calls`，v2.0.6+）、

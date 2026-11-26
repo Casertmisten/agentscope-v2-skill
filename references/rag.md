@@ -270,6 +270,8 @@ store = ElasticsearchStore(
 ```
 
 - record id 用内容 sha256 稳定生成（幂等插入）。
+- v2.0.13+ 删除操作校验 `delete_by_query` 的执行结果：响应含 `timed_out`、`version_conflicts`
+  或 `failures`（HTTP 200 但部分记录未删成）时抛 `RuntimeError`——此前不完整删除被静默当作成功。
 - 与 `QdrantStore`/`MilvusLiteStore`/`MongoDBStore` 实现同一 `VectorStoreBase` 接口，
   `KnowledgeBase` 用法完全一致。
 
