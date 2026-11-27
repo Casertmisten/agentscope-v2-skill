@@ -31,7 +31,8 @@ DirectoryListing + WorkspaceStatus/GitStatus + session cwd 工作目录）/ extr
 Anthropic thinking_mode 推理控制 / Channel IM 频道接入钉钉、飞书与 Discord / Skill 按 agent 分区隔离 / 服务化实时语音
 /realtime 端点：浏览器 WebRTC offer/answer 接 RealtimeAgent（v2.0.10+，v2.0.12+ 起 gpt-live-1 全双工 +
 Chat 委托）/ 可编辑服务端聊天输入队列 + steering 改投 / /background-tasks 后台任务只读查询 + 工具卸载
-占位符结构化 metadata（v2.0.12+）/
+占位符结构化 metadata（v2.0.12+）/ pipeline 语音模式（PipelineVoiceConfig 三段配置 + 提交租约与
+执行回执，v2.0.13+）/ workspace 文件编辑端点（edit-access / text 快照 + 乐观 revision 保存，v2.0.13+）/
 /asr 浏览器语音输入 / /voice-profile 音色档案（v2.0.12+））、Agent 中断（UserInterruptEvent）、
 回复错误上报（ErrorType 分类 + ReplyFinishedReason.ERROR）、跨用户资源共享（ResourceAccessPolicy 抽象）、
 Hub 注册中心（GitHubMCPHub / ClawSkillHub，从 hub 浏览-安装-拉入 workspace）、
@@ -512,6 +513,33 @@ DashScope CosyVoice/Realtime TTS 的 `max_retries` 修正为「初始尝试后�
 （给原始长度与写文件建议）；服务化 `GET /workspace/files` 只白名单媒体类型内联预览
 （含 application/json，text/html/SVG 强制下载 + nosniff）；`WordParser` 修订跟踪删除/移走
 的内容全面跳过（表格单元格文本/换行、图片，删除段落标记的段落不算空行）。
+服务化 pipeline 语音模式（v2.0.13+）：`SessionConfig.pipeline_voice_config`
+（`PipelineVoiceConfig`：asr/chat/tts 三段独立配置，chat 未设时跟随普通聊天设置）供
+浏览器 ASR→chat→TTS 三段管线语音会话；`POST /chat/` 请求体新增 `mode="pipeline_voice"` +
+`submission_id`/`client_request_id`，配套 `POST /chat/submissions`（语音输入前预留
+600s 过期的提交租约）、取消该提交、`GET /sessions/{id}/inputs/{message_id}/result`
+（按持久化执行回执解析已提交输入的结果，回执保留 1h，不再依赖会裁剪的事件回放日志）。
+服务化 workspace 文件编辑三端点（v2.0.13+）：`GET /workspace/files/edit-access`（路径级
+编辑资格探测）/ `GET /workspace/files/text`（返回带内容 revision 的 `TextFileSnapshot`）/
+`PUT /workspace/files/text`（乐观 revision 检查保存，≤2MB、校验行尾）；编辑范围 =
+workspace 根 + 持久化 session cwd（解析时排除文件系统根与后端用户 home）。
+Bash 只读白名单收紧 rg/tree（v2.0.13+）：仅**字面量参数**的常用调用才判只读——rg 放行
+-n/-i/-F/-l/-S/--files/--line-number/--pretty 及带值的 -e/--regexp/-g/--glob，tree 放行
+-a/-d/-f 及带值的 -I/-P/-L；含未识别标志、引号外 glob/替换展开、行继续等非字面量
+一律不判只读（`rg --pre` 可执行任意命令、`tree -o` 写文件）。
+飞书频道修复（v2.0.13+）：群聊文本中 `@_user_N` mention 占位符——@bot 的删去、@群成员
+渲染为 `@名字`（或 open_id），不再仅在 `only_at_reply` 时清理；视频消息按 `file_key` 下载
+本体（`image_key` 是封面，此前下到的是封面图）。
+`PPTParser` 读取 `mc:AlternateContent` 包裹的形状（v2.0.13+，如含公式的文本框——
+python-pptx 会跳过它们）：按文档顺序遍历 XML，AlternateContent 依次尝试 Choice/Fallback
+分支直到一个产出内容，组内同样递归。`ScheduleCreate` 工具收到非法 `permission_mode` 直接
+抛 `ValueError` 列出合法值（此前静默回退 `DONT_ASK`——最严格模式下所有审批都成拒绝，
+调用方并不知情）。`SteeringQueue.acknowledge` 先整批校验再逐个 settle（重复 id 此前会在
+第二个 pop 抛错、留下部分已 settle 的回执）。`AnthropicMultiAgentFormatter` 丢弃空
+system prompt（Anthropic 拒绝空 text block，与 chat formatter 行为对齐）。
+`AgentState.get_reply_message` / `has_awaiting_tool_calls` / `get_awaiting_tool_calls` 的
+`name` 参数改为可选（`None` 不再限定作者，供服务层按 reply_id 定位当前回复；
+`get_unfinished_tool_calls` 签名未变）。
 AgentScope 2.0.12 已正式发布，main 进入 2.0.13dev。
 
 **安装**：`pip install agentscope`（Python >= 3.11）

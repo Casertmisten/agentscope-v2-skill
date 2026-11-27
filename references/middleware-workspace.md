@@ -254,7 +254,9 @@ agent = Agent(
   失败照常抛出；`continue_on_error=True` 时初始化（进入 `async with`）/ 合成 / 清理任一阶段出错，
   本条 reply 余下部分停用语音、文本照常输出，并产出 `CustomEvent(name="tts_error",
   value={"reply_id": ..., "stage": "initialization" | "synthesis" | "cleanup"})`（已打开的音频 DataBlock
-  先补发 `DataBlockEndEvent`）。上游模型错误、消费方注入的错误与任务取消始终传播。服务化
+  先补发 `DataBlockEndEvent`）。上游模型错误、消费方注入的错误与任务取消始终传播。v2.0.13+ 起
+  reply 开始**前**（尚无 reply_id）的 `tts_error` 改带 `message_ids`（本次输入消息的 id 列表）与
+  可空的 `reply_id`（续跑输入本就携带目标 reply，新输入不继承上一条的）。服务化
   `ChatService` 固定以 `continue_on_error=True` 挂载；session 的 TTS 配置失效时不挂 TTS，并向 session
   事件流发布 `CustomEvent(name="tts_error", value={"stage": "configuration"})`。
 
@@ -343,7 +345,9 @@ print(await receipt.wait())   # "injected" / "unconsumed" / "failed"
   v2.0.12+ `acknowledge` 无法确定提交结果（如仅有待处理队列快照）时须抛
   `SteeringAcknowledgementUncertainError`（自 `agentscope.middleware` 导出）——中间件据此
   **保留**已注入的 hints（不回滚）再上抛，待 reply 清理后输入可重投；普通异常则保证未提交、
-  hints 回滚。`SteeringInput(id, messages)` 是一条带来源 id 的输入。
+  hints 回滚。`SteeringInput(id, messages)` 是一条带来源 id 的输入。v2.0.13+ 起
+  `SteeringQueue.acknowledge` 先**整批校验**（id 不得重复、且全部仍在 pending）再逐个 settle——
+  此前重复 id 会先 settle 第一个、在第二个 pop 处抛错，留下部分已结算的回执。
 - 服务化场景由 `ChatService` 自动给每个 agent 挂上总线版 `agentscope.app.middleware.SteeringMiddleware`
   （`hint_source="chat_input_steering"`），前端经 `POST /chat/queue/{item_id}/steer` 把排队中的
   输入改投给运行中的 reply，见下文「服务化聊天输入队列」。
@@ -1412,6 +1416,32 @@ OpenSandbox 未设置的 exit code 按失败处理；workspace skill 删除幂�
   （`SessionConfig` / 创建 / 更新请求均有；PATCH 不传保留、传 null 清空），供前端选择语音输入
   模型——服务端只校验 credential 可见性。`ASRModelConfig` 自 `agentscope.app.storage` 导出。
 
+### pipeline 语音模式（v2.0.13+）
+
+浏览器端 ASR → chat → TTS 三段管线的语音会话（与 `/realtime` 的专用 realtime 模型相对，
+这里复用普通 chat 模型 + 独立 ASR/TTS 配置）。服务层核心变化：
+
+- Session 新增 `pipeline_voice_config: PipelineVoiceConfig`（创建 / PATCH 均支持，PATCH 语义
+  同其他配置：不传保留、传 null 清空、省略的模型保持原值）：`asr_model_config` /
+  `chat_model_config` / `tts_model_config` 三段各自独立，均 `None` 时该段跟随普通聊天
+  设置（如 session 的 chat model / TTS 配置）。`PipelineVoiceConfig` 自
+  `agentscope.app.storage` 导出。
+- `POST /chat/` 请求体新增 `mode`（`"chat"`（默认）| `"pipeline_voice"`）与
+  `submission_id`（经 submissions 端点预留的提交身份）、`client_request_id`（相关 ID，
+  排队项开始执行时回显）：`submission_id` 只允许配合 `pipeline_voice`，且该模式要求
+  新输入消息（不能是 HITL 恢复/`None` 续跑）。
+- 提交租约与回执（保证语音输入的幂等与可查询）：
+
+| 端点 | 用途 |
+|---|---|
+| `POST /chat/submissions?agent_id=&session_id=` | 发送语音输入前预留一个 **600s 过期**的提交身份（队列满 429 / 忙 503） |
+| `POST /chat/submissions/{submission_id}/cancel` | 取消该提交 |
+| `GET /sessions/{session_id}/inputs/{message_id}/result?agent_id=` | 按**持久化执行回执**解析已提交输入的结果 → `{state: "reply" | "finished" | "unknown", reply_id}`（可选 `submission_id`；404 = 会话不存在）。回执保留 1h，查询不依赖可能被裁剪的事件回放日志 |
+
+- 语音 TTS 由服务层按首轮流水的配置快照绑定到该 reply（`ChatTTSMiddleware`，
+  首轮失败/未配置则该轮静音、后续轮回落普通聊天语音设置）；TTS 初始化失败的
+  `tts_error` 事件在 reply 开始前带 `message_ids`（见上文 TTSMiddleware）。
+
 ### 音色档案与语音复刻 /voice-profile（v2.0.12+）
 
 把复刻出的音色保存为用户私有的**音色档案**，session 的 TTS 配置引用档案即可使用（SDK 侧
@@ -1439,7 +1469,9 @@ OpenSandbox 未设置的 exit code 按失败处理；workspace skill 删除幂�
 
 `POST /schedule/` 的 `CreateScheduleRequest` 主要字段：`name` / `description` / `cron_expression` /
 `timezone`（默认 `"UTC"`）/ `agent_id` / `chat_model_config` / `enabled` / `stateful` / `permission_mode`
-（默认 `DONT_ASK`），以及 v2.0.12+ 起真正生效的 `started_at` / `ended_at`：
+（默认 `DONT_ASK`；v2.0.13+ 起非法值直接报错并列出合法值——agent 侧 `ScheduleCreate` 工具同此，
+此前 REST 层 422 但工具侧静默回退 `DONT_ASK`，定时任务会跑在所有审批都成拒绝的最严格模式
+而调用方不知情），以及 v2.0.12+ 起真正生效的 `started_at` / `ended_at`：
 
 - `started_at` / `ended_at`：`AwareDatetime | None`，**必须带 UTC 偏移**（如 `"2026-11-01T20:26:00+08:00"`，
   naive 时间或非法格式 422），均为闭区间端点；`started_at` 省略取创建时刻，`ended_at` 省略表示不结束；
@@ -1499,6 +1531,29 @@ OpenSandbox 未设置的 exit code 按失败处理；workspace skill 删除幂�
   `--no-optional-locks` 避免与 agent 自身 Bash 抢 `.git/index.lock`；命令设 5s 超时。
 - download-token 是**能力令牌而非身份**：只授权"该用户读取该路径一小段时间"，便于浏览器 `<a download>`
   或导航式下载把凭证放在 URL 里。换用 OAuth/JWT 时只改令牌签发来源，校验逻辑不变。
+
+### workspace 文件编辑端点（v2.0.13+）
+
+前端聊天界面里浏览/预览/编辑 workspace 文件（编辑器面板），三个端点均在
+`WorkspaceService` 上实现（读取与保存时会**重新校验**编辑资格，`edit-access` 只是提前探测）：
+
+| 端点 | 用途 |
+|---|---|
+| `GET /workspace/files/edit-access?agent_id=&session_id=&path=` | 探测该路径是否可编辑 → `FileEditAccess` |
+| `GET /workspace/files/text?agent_id=&session_id=&path=` | 读文本快照 → `TextFileSnapshot`（`path` 解析后路径 + `text` 内容 + `revision`＝内容 sha256） |
+| `PUT /workspace/files/text?agent_id=&session_id=&path=` | body `TextFileSaveRequest`（`text` 新内容 + 基于的 `revision` + `expected_path` 快照返回的路径）保存 |
+
+- **编辑范围** = workspace 根 ∪ 持久化的 session cwd（选择 cwd 即授予该目录内编辑权；解析时
+  排除文件系统根目录与后端用户 home——这不是宿主隔离，选定具体目录仍会扩大编辑面）。
+  范围外的文件仍可经只读端点（`GET /workspace/files`）读取，但不能开编辑器。
+- 保存是**乐观并发控制**：携带读取时的 `revision`（内容 sha256），服务端版本已前进则拒绝——
+  但无法排除 Agent 或外部进程的写入，检查是尽力而为。单文件 ≤ 2 MiB；CRLF/CR/LF
+  **混合**行尾直接 422 拒绝（不静默归一化），统一行尾原样落盘。
+- `X-User-ID` 仍是临时身份机制而非认证，该 API 依旧要求可信部署。
+- 容器后端的就地覆写（k8s / OpenSandbox 归档型）经共享的 `workspace/_overwrite.py`：
+  先从 stdin 读完整草稿再打开目标文件（长度不符抛 `EOFError` 不触碰文件）；远端写入可能
+  已完成但未获确认时抛 `WriteUnconfirmedError` → HTTP 502 `save_unconfirmed`（提示重新
+  加载确认文件状态，勿盲目重试）。
 
 ## Channel — 接入 IM 平台（v2.0.6+）
 
